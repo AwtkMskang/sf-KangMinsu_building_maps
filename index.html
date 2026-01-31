@@ -1,0 +1,1046 @@
+<!doctype html>
+<html lang="ko">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Seoul Building Map</title>
+
+    <!-- Leaflet -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+    <!-- MarkerCluster -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" />
+    <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+
+    <!-- JSZip -->
+    <script src="https://unpkg.com/jszip@3.10.1/dist/jszip.min.js"></script>
+
+    <style>
+        html,
+        body {
+            height: 100%;
+            margin: 0;
+        }
+
+        #map {
+            height: 100%;
+            width: 100%;
+        }
+
+        .panel {
+            position: absolute;
+            z-index: 9999;
+            top: 10px;
+            left: 10px;
+            background: rgba(255, 255, 255, 0.96);
+            border-radius: 14px;
+            padding: 12px 14px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.14);
+            width: 420px;
+            max-width: calc(100vw - 20px);
+            font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+            font-size: 13px;
+            line-height: 1.35;
+        }
+
+        .title-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+        }
+
+        .title {
+            font-weight: 800;
+        }
+
+        .pill {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 999px;
+            background: #f1f3f5;
+            font-size: 12px;
+        }
+
+        .muted {
+            color: #666;
+        }
+
+        .error {
+            color: #b00020;
+            font-weight: 800;
+        }
+
+        .small {
+            font-size: 12px;
+        }
+
+        .grid2 {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+        }
+
+        .grid3 {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            gap: 8px;
+        }
+
+        label {
+            display: block;
+            font-size: 12px;
+            color: #333;
+            margin: 8px 0 4px;
+            font-weight: 700;
+        }
+
+        input,
+        select,
+        button {
+            width: 100%;
+            box-sizing: border-box;
+            padding: 7px 9px;
+            border: 1px solid #ddd;
+            border-radius: 10px;
+            outline: none;
+            background: #fff;
+            font-size: 13px;
+        }
+
+        button {
+            cursor: pointer;
+        }
+
+        button:hover {
+            background: #f6f6f6;
+        }
+
+        .row {
+            display: flex;
+            gap: 8px;
+            margin-top: 8px;
+        }
+
+        .row>* {
+            flex: 1;
+        }
+
+        progress {
+            width: 100%;
+            height: 10px;
+        }
+
+        details {
+            margin-top: 10px;
+        }
+
+        details summary {
+            cursor: pointer;
+            font-weight: 800;
+        }
+
+        .hr {
+            height: 1px;
+            background: #eee;
+            margin: 10px 0;
+        }
+
+        .hint {
+            background: #f8f9fa;
+            border: 1px solid #eee;
+            border-radius: 12px;
+            padding: 8px 10px;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="map"></div>
+
+    <div class="panel">
+        <div class="title-row">
+            <div class="title">Seoul Building Map</div>
+            <span class="pill" id="statusPill">준비</span>
+        </div>
+        <div class="muted small" style="margin-top:4px;">
+            ZIP 1회 다운로드 → 브라우저 압축해제 → 화면 범위(geohash6 셀)만 렌더링
+        </div>
+
+        <div class="hr"></div>
+
+        <!-- 실무 탭용: URL 입력/로드 버튼 제거 -->
+        <div class="row">
+            <button id="btnReset" title="캐시 초기화 후 재로딩">초기화</button>
+        </div>
+
+        <div style="margin-top:10px;">
+            <progress id="progress" value="0" max="100"></progress>
+            <div class="muted small" id="progressText">-</div>
+            <div class="error small" id="errorText"></div>
+        </div>
+
+        <details open>
+            <summary style="margin-top:10px;">필터</summary>
+
+            <div class="hint small muted" style="margin-top:8px;">
+                팁: 데이터는 “현재 화면에 필요한 셀”만 로드됩니다. 드롭다운 옵션도 화면을 움직이며 자연스럽게 채워집니다.
+            </div>
+
+            <label>검색 (loc / 건물명 포함)</label>
+            <input id="qText" placeholder="예: 테헤란로, 강남대로, 건물명..." />
+
+            <div class="grid3">
+                <div>
+                    <label>법정동</label>
+                    <select id="dongFilter">
+                        <option value="">(전체)</option>
+                    </select>
+                </div>
+                <div>
+                    <label>주용도</label>
+                    <select id="mainUseFilter">
+                        <option value="">(전체)</option>
+                    </select>
+                </div>
+                <div>
+                    <label>기타용도</label>
+                    <select id="etcUseFilter">
+                        <option value="">(전체)</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="grid3">
+                <div>
+                    <label>지상층수 (최소)</label>
+                    <input id="minFloors" type="number" placeholder="예: 10" />
+                </div>
+                <div>
+                    <label>지상층수 (최대)</label>
+                    <input id="maxFloors" type="number" placeholder="예: 80" />
+                </div>
+                <div>
+                    <label>렌더 상한</label>
+                    <select id="renderCap">
+                        <option value="5000">5,000</option>
+                        <option value="10000" selected>10,000</option>
+                        <option value="15000">15,000</option>
+                        <option value="25000">25,000</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="grid2">
+                <div>
+                    <label>연면적(평) 최소</label>
+                    <input id="minAreaPy" type="number" placeholder="예: 3000" />
+                </div>
+                <div>
+                    <label>연면적(평) 최대</label>
+                    <input id="maxAreaPy" type="number" placeholder="예: 20000" />
+                </div>
+            </div>
+
+            <div class="grid2">
+                <div>
+                    <label>층당면적(추정) 최소</label>
+                    <input id="minFloorArea" type="number" placeholder="예: 200" />
+                </div>
+                <div>
+                    <label>층당면적(추정) 최대</label>
+                    <input id="maxFloorArea" type="number" placeholder="예: 2000" />
+                </div>
+            </div>
+
+            <div class="grid3">
+                <div>
+                    <label>허가일(시작)</label>
+                    <input id="permitFrom" type="date" />
+                </div>
+                <div>
+                    <label>허가일(끝)</label>
+                    <input id="permitTo" type="date" />
+                </div>
+                <div>
+                    <label style="visibility:hidden;">x</label>
+                    <button id="btnClearPermit" title="허가일 범위 초기화">허가일 초기화</button>
+                </div>
+            </div>
+
+            <div class="grid3">
+                <div>
+                    <label>착공일(시작)</label>
+                    <input id="startFrom" type="date" />
+                </div>
+                <div>
+                    <label>착공일(끝)</label>
+                    <input id="startTo" type="date" />
+                </div>
+                <div>
+                    <label style="visibility:hidden;">x</label>
+                    <button id="btnClearStart" title="착공일 범위 초기화">착공일 초기화</button>
+                </div>
+            </div>
+
+            <div class="grid3">
+                <div>
+                    <label>사용승인일(시작)</label>
+                    <input id="approveFrom" type="date" />
+                </div>
+                <div>
+                    <label>사용승인일(끝)</label>
+                    <input id="approveTo" type="date" />
+                </div>
+                <div>
+                    <label style="visibility:hidden;">x</label>
+                    <button id="btnClearApprove" title="사용승인일 범위 초기화">사용승인일 초기화</button>
+                </div>
+            </div>
+
+            <div class="row">
+                <button id="btnClearAll">필터 전체 초기화</button>
+            </div>
+        </details>
+
+        <div class="hr"></div>
+        <div class="muted small" id="stats">-</div>
+    </div>
+
+    <script>
+        /**********************
+         * 설정
+         **********************/
+        // 실무 탭용: ZIP URL 고정 (jsDelivr)
+        const DEFAULT_ZIP_URL =
+            "https://cdn.jsdelivr.net/gh/AwtkMskang/sf-building-map-data@main/seoul_geohash6.zip";
+
+        const INITIAL_CENTER = [37.498, 127.027]; // 강남역
+        const INITIAL_ZOOM = 16; // “도로명 단위”에 맞게 좀 더 높게 시작
+
+        const GEOHASH_PRECISION = 6;
+
+        /**********************
+         * 전역 상태
+         **********************/
+        let map;
+        let clusterLayer;
+
+        let zipBlob = null;
+        let zip = null;
+
+        // manifest: [{ key, file, bbox:{minLat,maxLat,minLng,maxLng}, count }]
+        let manifest = [];
+
+        // 드롭다운 옵션 수집
+        const dongSet = new Set();
+        const mainUseSet = new Set();
+        const etcUseSet = new Set();
+
+        // key -> { points, markers, bbox, count, filterSignature }
+        const cellCache = new Map();
+
+        const LRU_KEYS = [];
+        const MAX_CACHED_CELLS = 250;
+
+        let renderInFlight = false;
+        let renderTimer = null;
+
+        /**********************
+         * UI
+         **********************/
+        const $ = (id) => document.getElementById(id);
+
+        const btnReset = $("btnReset");
+
+        const elProgress = $("progress");
+        const elProgressText = $("progressText");
+        const elErrorText = $("errorText");
+        const elStatusPill = $("statusPill");
+        const elStats = $("stats");
+
+        // filters
+        const elQText = $("qText");
+        const elDongFilter = $("dongFilter");
+        const elMainUseFilter = $("mainUseFilter");
+        const elEtcUseFilter = $("etcUseFilter");
+
+        const elMinFloors = $("minFloors");
+        const elMaxFloors = $("maxFloors");
+
+        const elMinAreaPy = $("minAreaPy");
+        const elMaxAreaPy = $("maxAreaPy");
+
+        const elMinFloorArea = $("minFloorArea");
+        const elMaxFloorArea = $("maxFloorArea");
+
+        const elPermitFrom = $("permitFrom");
+        const elPermitTo = $("permitTo");
+        const elStartFrom = $("startFrom");
+        const elStartTo = $("startTo");
+        const elApproveFrom = $("approveFrom");
+        const elApproveTo = $("approveTo");
+
+        const btnClearPermit = $("btnClearPermit");
+        const btnClearStart = $("btnClearStart");
+        const btnClearApprove = $("btnClearApprove");
+        const btnClearAll = $("btnClearAll");
+
+        const elRenderCap = $("renderCap");
+
+        function setStatus(text) { elStatusPill.textContent = text; }
+        function setError(text) { elErrorText.textContent = text || ""; }
+        function setProgress(pct, text) {
+            elProgress.value = Math.max(0, Math.min(100, pct));
+            elProgressText.textContent = text || "";
+        }
+
+        /**********************
+         * 유틸
+         **********************/
+        function escapeHtml(str) {
+            return String(str)
+                .replaceAll("&", "&amp;")
+                .replaceAll("<", "&lt;")
+                .replaceAll(">", "&gt;")
+                .replaceAll('"', "&quot;")
+                .replaceAll("'", "&#039;");
+        }
+
+        function toNum(v) {
+            const s = String(v ?? "").replaceAll(",", "").trim();
+            if (!s) return NaN;
+            const x = Number(s);
+            return Number.isFinite(x) ? x : NaN;
+        }
+
+        function dateToInt(yyyy_mm_dd) {
+            // "YYYY-MM-DD" -> 20250131
+            if (!yyyy_mm_dd) return NaN;
+            const s = String(yyyy_mm_dd).trim();
+            if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return NaN;
+            return Number(s.replaceAll("-", ""));
+        }
+
+        function anyDateStrToInt(v) {
+            // 엑셀에서 "YYYY-MM-DD"로 넣었지만 혹시 "YYYY.MM.DD" 같은 변형도 처리
+            if (!v) return NaN;
+            const s = String(v).trim();
+            if (!s) return NaN;
+            if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return Number(s.replaceAll("-", ""));
+            if (/^\d{4}\.\d{2}\.\d{2}$/.test(s)) return Number(s.replaceAll(".", ""));
+            if (/^\d{8}$/.test(s)) return Number(s);
+            return NaN;
+        }
+
+        function bboxIntersects(a, b) {
+            if (a.maxLat < b.minLat) return false;
+            if (a.minLat > b.maxLat) return false;
+            if (a.maxLng < b.minLng) return false;
+            if (a.minLng > b.maxLng) return false;
+            return true;
+        }
+
+        function getMapBbox() {
+            const b = map.getBounds();
+            return {
+                minLat: b.getSouth(),
+                maxLat: b.getNorth(),
+                minLng: b.getWest(),
+                maxLng: b.getEast()
+            };
+        }
+
+        function touchLRU(key) {
+            const idx = LRU_KEYS.indexOf(key);
+            if (idx >= 0) LRU_KEYS.splice(idx, 1);
+            LRU_KEYS.push(key);
+
+            while (LRU_KEYS.length > MAX_CACHED_CELLS) {
+                const evictKey = LRU_KEYS.shift();
+                if (!evictKey) break;
+                const entry = cellCache.get(evictKey);
+                if (entry) {
+                    if (entry.markers) clusterLayer.removeLayer(entry.markers);
+                    cellCache.delete(evictKey);
+                }
+            }
+        }
+
+        function refreshDropdown(el, set) {
+            const cur = el.value;
+            const sorted = Array.from(set).sort((a, b) => a.localeCompare(b));
+            el.innerHTML = [`<option value="">(전체)</option>`]
+                .concat(sorted.map(v => `<option value="${escapeHtml(v)}">${escapeHtml(v)}</option>`))
+                .join("");
+            el.value = cur;
+        }
+
+        function clearDropdownSets() {
+            dongSet.clear();
+            mainUseSet.clear();
+            etcUseSet.clear();
+            refreshDropdown(elDongFilter, dongSet);
+            refreshDropdown(elMainUseFilter, mainUseSet);
+            refreshDropdown(elEtcUseFilter, etcUseSet);
+        }
+
+        /**********************
+         * 다운로드(진행률 표시)
+         **********************/
+        async function fetchWithProgress(url) {
+            setError("");
+            setStatus("다운로드");
+            setProgress(0, "ZIP 다운로드 시작...");
+
+            const res = await fetch(url, { cache: "no-store" });
+            if (!res.ok) throw new Error(`ZIP 다운로드 실패: HTTP ${res.status}`);
+
+            const contentLength = res.headers.get("content-length");
+            const total = contentLength ? parseInt(contentLength, 10) : null;
+
+            if (!res.body || !total) {
+                const blob = await res.blob();
+                setProgress(100, `다운로드 완료 (${(blob.size / 1024 / 1024).toFixed(2)} MB)`);
+                return blob;
+            }
+
+            const reader = res.body.getReader();
+            let received = 0;
+            const chunks = [];
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                chunks.push(value);
+                received += value.length;
+                const pct = (received / total) * 100;
+                setProgress(pct, `다운로드 중... ${(received / 1024 / 1024).toFixed(2)} / ${(total / 1024 / 1024).toFixed(2)} MB`);
+            }
+
+            const blob = new Blob(chunks, { type: "application/zip" });
+            setProgress(100, `다운로드 완료 (${(blob.size / 1024 / 1024).toFixed(2)} MB)`);
+            return blob;
+        }
+
+        /**********************
+         * ZIP 로드 + manifest 파싱
+         **********************/
+        async function loadZipAndManifest() {
+            const url = DEFAULT_ZIP_URL;
+            if (!url) throw new Error("ZIP URL이 비어 있습니다.");
+
+            zipBlob = await fetchWithProgress(url);
+
+            setStatus("압축해제");
+            setProgress(0, "ZIP 압축 해제 중...");
+            zip = await JSZip.loadAsync(zipBlob);
+            setProgress(65, "manifest.json 읽는 중...");
+
+            // 1) manifest.json 위치 자동 탐색
+            let manifestPath = "manifest.json";
+            let manifestFile = zip.file(manifestPath);
+
+            if (!manifestFile) {
+                const candidates = zip.file(/manifest\.json$/i);
+                if (!candidates || candidates.length === 0) {
+                    throw new Error("ZIP 내부에서 manifest.json을 찾지 못했습니다.");
+                }
+                manifestFile = candidates[0];
+                manifestPath = manifestFile.name; // 예: seoul_geohash6/manifest.json
+            }
+
+            const manifestText = await manifestFile.async("string");
+            const raw = JSON.parse(manifestText);
+
+            // manifest 폴더(baseDir)
+            const baseDir = manifestPath.includes("/")
+                ? manifestPath.slice(0, manifestPath.lastIndexOf("/") + 1)
+                : "";
+
+            // 캐시/옵션 초기화
+            clusterLayer.clearLayers();
+            cellCache.clear();
+            LRU_KEYS.length = 0;
+            clearDropdownSets();
+
+            // 2) manifest 파싱
+            if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+                const keys = Object.keys(raw);
+                if (keys.length === 0) throw new Error("manifest.json이 비어 있습니다.");
+
+                manifest = keys.map((key) => {
+                    const it = raw[key] || {};
+                    const minLat = Number(it.minLat ?? it.lat_min ?? it.south ?? it.min_lat);
+                    const maxLat = Number(it.maxLat ?? it.lat_max ?? it.north ?? it.max_lat);
+                    const minLng = Number(it.minLng ?? it.lng_min ?? it.west ?? it.min_lng);
+                    const maxLng = Number(it.maxLng ?? it.lng_max ?? it.east ?? it.max_lng);
+                    const count = Number(it.count ?? it.n ?? it.total ?? 0);
+
+                    if (!Number.isFinite(minLat) || !Number.isFinite(maxLat) || !Number.isFinite(minLng) || !Number.isFinite(maxLng)) {
+                        throw new Error(`manifest 항목(${key}) bbox 정보가 부족하거나 숫자가 아닙니다.`);
+                    }
+
+                    return {
+                        key: String(key),
+                        file: `${baseDir}${key}.json`,
+                        bbox: { minLat, maxLat, minLng, maxLng },
+                        count: Number.isFinite(count) ? count : 0
+                    };
+                });
+            } else {
+                const items = Array.isArray(raw)
+                    ? raw
+                    : (raw.items || raw.cells || raw.data || raw.index || raw.manifest || []);
+
+                if (!Array.isArray(items) || items.length === 0) {
+                    throw new Error("manifest.json 형식이 예상과 다르거나 비어 있습니다.");
+                }
+
+                manifest = items.map((it) => {
+                    const key = it.key || it.geohash || it.gh || it.id || it.hash;
+                    const file = it.file || it.filename || it.path || (key ? `${baseDir}${key}.json` : null);
+
+                    const minLat = Number(it.minLat ?? it.south ?? it.min_lat ?? it.lat_min);
+                    const maxLat = Number(it.maxLat ?? it.north ?? it.max_lat ?? it.lat_max);
+                    const minLng = Number(it.minLng ?? it.west ?? it.min_lng ?? it.lng_min);
+                    const maxLng = Number(it.maxLng ?? it.east ?? it.max_lng ?? it.lng_max);
+                    const count = Number(it.count ?? it.n ?? it.total ?? 0);
+
+                    if (!key || !file) throw new Error("manifest 항목에 key/file이 없습니다.");
+                    if (!Number.isFinite(minLat) || !Number.isFinite(maxLat) || !Number.isFinite(minLng) || !Number.isFinite(maxLng)) {
+                        throw new Error(`manifest 항목(${key}) bbox 정보가 부족하거나 숫자가 아닙니다.`);
+                    }
+
+                    return {
+                        key: String(key),
+                        file: String(file),
+                        bbox: { minLat, maxLat, minLng, maxLng },
+                        count: Number.isFinite(count) ? count : 0
+                    };
+                });
+            }
+
+            setProgress(100, `manifest 로드 완료 (셀 ${manifest.length.toLocaleString()}개)`);
+            setStatus("준비완료");
+
+            scheduleRender();
+        }
+
+        /**********************
+         * 셀 데이터 로드
+         **********************/
+        async function loadCellPoints(cell) {
+            const { key, file } = cell;
+
+            const cached = cellCache.get(key);
+            if (cached?.points) {
+                touchLRU(key);
+                return cached.points;
+            }
+
+            const fileObj = zip.file(file);
+            if (!fileObj) throw new Error(`ZIP 내부 파일 없음: ${file}`);
+
+            const text = await fileObj.async("string");
+            const points = JSON.parse(text);
+
+            // 드롭다운 옵션 수집(현재 로드된 셀 기준)
+            if (Array.isArray(points)) {
+                for (const p of points) {
+                    const dong = p?.["법정동"];
+                    const mainUse = p?.["주용도"];
+                    const etcUse = p?.["기타용도"];
+
+                    if (dong != null && String(dong).trim() !== "") dongSet.add(String(dong));
+                    if (mainUse != null && String(mainUse).trim() !== "") mainUseSet.add(String(mainUse));
+                    if (etcUse != null && String(etcUse).trim() !== "") etcUseSet.add(String(etcUse));
+                }
+            }
+
+            cellCache.set(key, { points, markers: null, bbox: cell.bbox, count: cell.count, filterSignature: null });
+            touchLRU(key);
+            return points;
+        }
+
+        /**********************
+         * 필터 평가
+         **********************/
+        function inNumRange(v, minV, maxV) {
+            const x = toNum(v);
+            if (Number.isFinite(minV) && (!Number.isFinite(x) || x < minV)) return false;
+            if (Number.isFinite(maxV) && (!Number.isFinite(x) || x > maxV)) return false;
+            return true;
+        }
+
+        function inDateRange(dateStr, fromStr, toStr) {
+            const from = dateToInt(fromStr);
+            const to = dateToInt(toStr);
+            if (!Number.isFinite(from) && !Number.isFinite(to)) return true;
+
+            const d = anyDateStrToInt(dateStr);
+            // 날짜 필터가 걸려있는데 값이 없으면 제외
+            if (!Number.isFinite(d)) return false;
+
+            if (Number.isFinite(from) && d < from) return false;
+            if (Number.isFinite(to) && d > to) return false;
+            return true;
+        }
+
+        function passesFilters(p) {
+            // 1) 텍스트 검색
+            const q = (elQText.value || "").trim().toLowerCase();
+            if (q) {
+                const loc = String(p?.loc ?? "").toLowerCase();
+                const name = String(p?.["건물명"] ?? "").toLowerCase();
+                if (!loc.includes(q) && !name.includes(q)) return false;
+            }
+
+            // 2) 드롭다운
+            const dong = elDongFilter.value;
+            if (dong && String(p?.["법정동"] ?? "") !== dong) return false;
+
+            const mainUse = elMainUseFilter.value;
+            if (mainUse && String(p?.["주용도"] ?? "") !== mainUse) return false;
+
+            const etcUse = elEtcUseFilter.value;
+            if (etcUse && String(p?.["기타용도"] ?? "") !== etcUse) return false;
+
+            // 3) 숫자 범위
+            const minFloors = toNum(elMinFloors.value);
+            const maxFloors = toNum(elMaxFloors.value);
+            if (!inNumRange(p?.["지상층수"], minFloors, maxFloors)) return false;
+
+            const minArea = toNum(elMinAreaPy.value);
+            const maxArea = toNum(elMaxAreaPy.value);
+            if (!inNumRange(p?.["연면적(평)"], minArea, maxArea)) return false;
+
+            const minFA = toNum(elMinFloorArea.value);
+            const maxFA = toNum(elMaxFloorArea.value);
+            if (!inNumRange(p?.["(추정) 지상 층당 면적"], minFA, maxFA)) return false;
+
+            // 4) 날짜 범위
+            if (!inDateRange(p?.["허가일"], elPermitFrom.value, elPermitTo.value)) return false;
+            if (!inDateRange(p?.["착공일"], elStartFrom.value, elStartTo.value)) return false;
+            if (!inDateRange(p?.["사용승인일"], elApproveFrom.value, elApproveTo.value)) return false;
+
+            return true;
+        }
+
+        /**********************
+         * 마커 생성 + 팝업(요청 12필드)
+         **********************/
+        function buildMarker(point) {
+            const lat = Number(point?.lat);
+            const lng = Number(point?.lng);
+            if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+
+            const m = L.marker([lat, lng]);
+
+            const loc = point?.loc ?? "";
+            const name = point?.["건물명"] ?? "";
+            const areaM2 = point?.["연면적(m²)"] ?? "";
+            const areaPy = point?.["연면적(평)"] ?? "";
+            const floorArea = point?.["(추정) 지상 층당 면적"] ?? "";
+            const floors = point?.["지상층수"] ?? "";
+            const dong = point?.["법정동"] ?? "";
+            const etcUse = point?.["기타용도"] ?? "";
+            const mainUse = point?.["주용도"] ?? "";
+            const permit = point?.["허가일"] ?? "";
+            const start = point?.["착공일"] ?? "";
+            const approve = point?.["사용승인일"] ?? "";
+            const sfUrl = point?.sfUrl ? String(point.sfUrl) : "";
+
+            const popup = `
+        <div style="min-width:290px; font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif; font-size:13px; line-height:1.35;">
+          <div style="font-weight:900; margin-bottom:6px;">${escapeHtml(name || "(건물명 없음)")}</div>
+          <div style="margin-bottom:10px; color:#444;">${escapeHtml(loc || "(loc 없음)")}</div>
+
+          <div style="display:grid; grid-template-columns: 120px 1fr; gap:4px 10px;">
+            <div style="color:#666;">연면적(m²)</div><div><b>${escapeHtml(String(areaM2))}</b></div>
+            <div style="color:#666;">연면적(평)</div><div><b>${escapeHtml(String(areaPy))}</b></div>
+            <div style="color:#666;">층당면적(추정)</div><div><b>${escapeHtml(String(floorArea))}</b></div>
+            <div style="color:#666;">지상층수</div><div><b>${escapeHtml(String(floors))}</b></div>
+            <div style="color:#666;">법정동</div><div>${escapeHtml(String(dong))}</div>
+            <div style="color:#666;">기타용도</div><div>${escapeHtml(String(etcUse))}</div>
+            <div style="color:#666;">주용도</div><div>${escapeHtml(String(mainUse))}</div>
+            <div style="color:#666;">허가일</div><div>${escapeHtml(String(permit))}</div>
+            <div style="color:#666;">착공일</div><div>${escapeHtml(String(start))}</div>
+            <div style="color:#666;">사용승인일</div><div>${escapeHtml(String(approve))}</div>
+          </div>
+
+          ${sfUrl ? `<div style="margin-top:10px;"><a href="${escapeHtml(sfUrl)}" target="_blank" rel="noopener">Salesforce에서 열기</a></div>` : ""}
+        </div>
+      `;
+            m.bindPopup(popup);
+            return m;
+        }
+
+        function makeMarkerGroup(points) {
+            const group = L.layerGroup();
+            let added = 0;
+
+            for (const p of (Array.isArray(points) ? points : [])) {
+                if (!passesFilters(p)) continue;
+                const mk = buildMarker(p);
+                if (mk) {
+                    group.addLayer(mk);
+                    added++;
+                }
+            }
+            return { group, added };
+        }
+
+        /**********************
+         * 렌더링(뷰포트 기반)
+         **********************/
+        function computeNeededCells() {
+            const bbox = getMapBbox();
+            const needed = [];
+            let expectedPoints = 0;
+
+            for (const cell of manifest) {
+                if (bboxIntersects(cell.bbox, bbox)) {
+                    needed.push(cell);
+                    expectedPoints += (cell.count || 0);
+                }
+            }
+            return { needed, expectedPoints };
+        }
+
+        function scheduleRender() {
+            if (!zip || !manifest.length) return;
+            if (renderTimer) clearTimeout(renderTimer);
+            renderTimer = setTimeout(() => renderViewport().catch(e => setError(e.message)), 150);
+        }
+
+        async function renderViewport() {
+            if (renderInFlight) return;
+            renderInFlight = true;
+
+            try {
+                setError("");
+                setStatus("렌더링");
+
+                const cap = Number(elRenderCap.value);
+                const { needed, expectedPoints } = computeNeededCells();
+
+                const zoom = map.getZoom();
+                if (expectedPoints > cap && zoom < 17) {
+                    elStats.innerHTML = `
+            현재 화면 예상 포인트가 많습니다: <b>${expectedPoints.toLocaleString()}</b> (상한 ${cap.toLocaleString()})
+            <br><span class="muted">더 확대하시면 더 부드럽게 표시됩니다.</span>
+          `;
+                } else {
+                    elStats.textContent = "-";
+                }
+
+                const neededKeys = new Set(needed.map(c => c.key));
+
+                // 화면 밖 셀 제거(마커 레이어만)
+                for (const [key, entry] of cellCache.entries()) {
+                    if (entry.markers && !neededKeys.has(key)) {
+                        clusterLayer.removeLayer(entry.markers);
+                        entry.markers = null;
+                    }
+                }
+
+                let totalAdded = 0;
+                let loadedCells = 0;
+
+                // 필터 상태 시그니처(필터 바뀌면 셀 마커를 재생성)
+                const filterSignature = JSON.stringify({
+                    q: elQText.value || "",
+                    dong: elDongFilter.value || "",
+                    main: elMainUseFilter.value || "",
+                    etc: elEtcUseFilter.value || "",
+                    minF: elMinFloors.value || "",
+                    maxF: elMaxFloors.value || "",
+                    minA: elMinAreaPy.value || "",
+                    maxA: elMaxAreaPy.value || "",
+                    minFA: elMinFloorArea.value || "",
+                    maxFA: elMaxFloorArea.value || "",
+                    pf: elPermitFrom.value || "",
+                    pt: elPermitTo.value || "",
+                    sf: elStartFrom.value || "",
+                    st: elStartTo.value || "",
+                    af: elApproveFrom.value || "",
+                    at: elApproveTo.value || ""
+                });
+
+                for (const cell of needed) {
+                    const entry = cellCache.get(cell.key);
+
+                    if (entry?.markers && entry.filterSignature === filterSignature) {
+                        touchLRU(cell.key);
+                        continue;
+                    }
+
+                    if (entry?.markers && entry.filterSignature !== filterSignature) {
+                        clusterLayer.removeLayer(entry.markers);
+                        entry.markers = null;
+                    }
+
+                    const points = await loadCellPoints(cell);
+                    loadedCells++;
+
+                    const { group, added } = makeMarkerGroup(points);
+                    totalAdded += added;
+
+                    const cacheEntry = cellCache.get(cell.key);
+                    cacheEntry.markers = group;
+                    cacheEntry.filterSignature = filterSignature;
+                    touchLRU(cell.key);
+
+                    clusterLayer.addLayer(group);
+
+                    if (loadedCells % 6 === 0) {
+                        setProgress(0, `셀 로딩/렌더링 중... (+${totalAdded.toLocaleString()} pts)`);
+                    }
+                }
+
+                // 드롭다운 갱신
+                refreshDropdown(elDongFilter, dongSet);
+                refreshDropdown(elMainUseFilter, mainUseSet);
+                refreshDropdown(elEtcUseFilter, etcUseSet);
+
+                setStatus("표시중");
+                setProgress(0, `표시중: ${totalAdded.toLocaleString()} pts / 셀 ${needed.length.toLocaleString()}개`);
+            } finally {
+                renderInFlight = false;
+            }
+        }
+
+        /**********************
+         * 지도 초기화
+         **********************/
+        function initMap() {
+            map = L.map("map", { preferCanvas: true }).setView(INITIAL_CENTER, INITIAL_ZOOM);
+
+            L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+                maxZoom: 19,
+                attribution: "&copy; OpenStreetMap contributors"
+            }).addTo(map);
+
+            clusterLayer = L.markerClusterGroup({
+                maxClusterRadius: 60,
+                chunkedLoading: true
+            });
+            map.addLayer(clusterLayer);
+
+            map.on("moveend zoomend", () => scheduleRender());
+        }
+
+        /**********************
+         * 이벤트
+         **********************/
+        btnReset.addEventListener("click", async () => {
+            // 실무 탭용: 초기화 후 자동 재로딩
+            setError("");
+            setProgress(0, "-");
+            setStatus("준비");
+
+            if (clusterLayer) clusterLayer.clearLayers();
+            cellCache.clear();
+            LRU_KEYS.length = 0;
+            manifest = [];
+
+            zipBlob = null;
+            zip = null;
+
+            elStats.textContent = "-";
+            clearDropdownSets();
+
+            try {
+                await loadZipAndManifest();
+            } catch (e) {
+                setError(e.message || String(e));
+                setStatus("오류");
+            }
+        });
+
+        // 필터 변경 시 즉시 렌더
+        const rerender = () => scheduleRender();
+        elQText.addEventListener("input", rerender);
+        elDongFilter.addEventListener("change", rerender);
+        elMainUseFilter.addEventListener("change", rerender);
+        elEtcUseFilter.addEventListener("change", rerender);
+
+        elMinFloors.addEventListener("input", rerender);
+        elMaxFloors.addEventListener("input", rerender);
+        elMinAreaPy.addEventListener("input", rerender);
+        elMaxAreaPy.addEventListener("input", rerender);
+        elMinFloorArea.addEventListener("input", rerender);
+        elMaxFloorArea.addEventListener("input", rerender);
+
+        elPermitFrom.addEventListener("change", rerender);
+        elPermitTo.addEventListener("change", rerender);
+        elStartFrom.addEventListener("change", rerender);
+        elStartTo.addEventListener("change", rerender);
+        elApproveFrom.addEventListener("change", rerender);
+        elApproveTo.addEventListener("change", rerender);
+
+        btnClearPermit.addEventListener("click", () => {
+            elPermitFrom.value = "";
+            elPermitTo.value = "";
+            scheduleRender();
+        });
+
+        btnClearStart.addEventListener("click", () => {
+            elStartFrom.value = "";
+            elStartTo.value = "";
+            scheduleRender();
+        });
+
+        btnClearApprove.addEventListener("click", () => {
+            elApproveFrom.value = "";
+            elApproveTo.value = "";
+            scheduleRender();
+        });
+
+        btnClearAll.addEventListener("click", () => {
+            elQText.value = "";
+            elDongFilter.value = "";
+            elMainUseFilter.value = "";
+            elEtcUseFilter.value = "";
+
+            elMinFloors.value = "";
+            elMaxFloors.value = "";
+            elMinAreaPy.value = "";
+            elMaxAreaPy.value = "";
+            elMinFloorArea.value = "";
+            elMaxFloorArea.value = "";
+
+            elPermitFrom.value = "";
+            elPermitTo.value = "";
+            elStartFrom.value = "";
+            elStartTo.value = "";
+            elApproveFrom.value = "";
+            elApproveTo.value = "";
+
+            scheduleRender();
+        });
+
+        /**********************
+         * 시작
+         **********************/
+        initMap();
+        setStatus("자동 로드");
+        setProgress(0, "데이터를 불러오는 중...");
+
+        // 실무 탭용: 페이지 진입 시 자동 로드
+        (async () => {
+            try {
+                await loadZipAndManifest();
+            } catch (e) {
+                setError(e.message || String(e));
+                setStatus("오류");
+            }
+        })();
+    </script>
+</body>
+
+</html>
