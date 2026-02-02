@@ -63,6 +63,19 @@
             border-radius: 999px;
             background: #f1f3f5;
             font-size: 12px;
+            white-space: nowrap;
+        }
+
+        .pill.ok {
+            background: #e6fcf5;
+        }
+
+        .pill.warn {
+            background: #fff4e6;
+        }
+
+        .pill.err {
+            background: #ffe3e3;
         }
 
         .muted {
@@ -119,6 +132,26 @@
             background: #f6f6f6;
         }
 
+        button.primary {
+            border-color: #c3dafe;
+            background: #edf2ff;
+            font-weight: 800;
+        }
+
+        button.primary:hover {
+            background: #e7f0ff;
+        }
+
+        button.danger {
+            border-color: #ffd6d6;
+            background: #fff0f0;
+            font-weight: 800;
+        }
+
+        button.danger:hover {
+            background: #ffe8e8;
+        }
+
         .row {
             display: flex;
             gap: 8px;
@@ -155,6 +188,48 @@
             border-radius: 12px;
             padding: 8px 10px;
         }
+
+        .kv {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+            flex-wrap: wrap;
+            margin-top: 8px;
+        }
+
+        .kv .k {
+            font-weight: 800;
+        }
+
+        .legend {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            flex-wrap: wrap;
+            margin-top: 8px;
+        }
+
+        .dot {
+            display: inline-block;
+            width: 10px;
+            height: 10px;
+            border-radius: 999px;
+            margin-right: 6px;
+            border: 1px solid rgba(0, 0, 0, 0.18);
+            vertical-align: -1px;
+        }
+
+        .dot.unassigned {
+            background: #3b82f6;
+        }
+
+        .dot.selected {
+            background: #22c55e;
+        }
+
+        .dot.assigned {
+            background: #9ca3af;
+        }
     </style>
 </head>
 
@@ -172,7 +247,25 @@
 
         <div class="hr"></div>
 
-        <!-- 실무 탭용: URL 입력/로드 버튼 제거 -->
+        <!-- 캠페인/선택 UI -->
+        <div class="kv small">
+            <span class="pill" id="campaignPill">Campaign: -</span>
+            <span class="pill ok" id="selPill">선택: 0</span>
+            <span class="pill" id="assignPill">할당됨: 0</span>
+        </div>
+
+        <div class="legend small muted">
+            <span><span class="dot unassigned"></span>미할당</span>
+            <span><span class="dot selected"></span>선택됨</span>
+            <span><span class="dot assigned"></span>할당됨</span>
+        </div>
+
+        <div class="row" style="margin-top:10px;">
+            <button class="primary" id="btnAddSelected" title="선택된 건물을 Salesforce 캠페인에 추가">선택 추가</button>
+            <button class="danger" id="btnClearSelected" title="선택 해제">선택 해제</button>
+        </div>
+
+        <!-- 기존: 초기화 -->
         <div class="row">
             <button id="btnReset" title="캐시 초기화 후 재로딩">초기화</button>
         </div>
@@ -319,9 +412,20 @@
             "https://cdn.jsdelivr.net/gh/AwtkMskang/sf-building-map-data@main/seoul_geohash6.zip";
 
         const INITIAL_CENTER = [37.498, 127.027]; // 강남역
-        const INITIAL_ZOOM = 16; // “도로명 단위”에 맞게 좀 더 높게 시작
+        const INITIAL_ZOOM = 16;
 
-        const GEOHASH_PRECISION = 6;
+        // Visualforce 허용 origin(권장: VF 쪽에서 targetOrigin을 고정하면 여기 "*"로 둬도 되지만,
+        // 브라우저 콘솔 디버깅 시 안전을 위해 저장)
+        // 실제 검증은 VF(부모)에서 수행하는 구조를 권장합니다.
+        const EXPECTED_PARENT_HINT = "salesforce"; // 단순 힌트(엄격 검증은 부모에서)
+
+        /**********************
+         * Salesforce 연동 상태 (postMessage)
+         **********************/
+        let currentCampaignId = null;
+        const assignedKeys = new Set();    // 캠페인에 이미 존재(회색)
+        const selectedKeys = new Set();    // 사용자가 선택(초록)
+        const selectedPayloadByKey = new Map(); // key -> payload(전송용)
 
         /**********************
          * 전역 상태
@@ -355,12 +459,18 @@
         const $ = (id) => document.getElementById(id);
 
         const btnReset = $("btnReset");
+        const btnAddSelected = $("btnAddSelected");
+        const btnClearSelected = $("btnClearSelected");
 
         const elProgress = $("progress");
         const elProgressText = $("progressText");
         const elErrorText = $("errorText");
         const elStatusPill = $("statusPill");
         const elStats = $("stats");
+
+        const elCampaignPill = $("campaignPill");
+        const elSelPill = $("selPill");
+        const elAssignPill = $("assignPill");
 
         // filters
         const elQText = $("qText");
@@ -391,11 +501,23 @@
 
         const elRenderCap = $("renderCap");
 
-        function setStatus(text) { elStatusPill.textContent = text; }
+        function setStatus(text, tone) {
+            elStatusPill.textContent = text;
+            elStatusPill.className = "pill" + (tone ? (" " + tone) : "");
+        }
         function setError(text) { elErrorText.textContent = text || ""; }
         function setProgress(pct, text) {
             elProgress.value = Math.max(0, Math.min(100, pct));
             elProgressText.textContent = text || "";
+        }
+
+        function refreshCampaignUI() {
+            elCampaignPill.textContent = `Campaign: ${currentCampaignId ? currentCampaignId : "-"}`;
+            elSelPill.textContent = `선택: ${selectedKeys.size.toLocaleString()}`;
+            elAssignPill.textContent = `할당됨: ${assignedKeys.size.toLocaleString()}`;
+
+            btnAddSelected.disabled = !currentCampaignId || selectedKeys.size === 0;
+            btnClearSelected.disabled = selectedKeys.size === 0;
         }
 
         /**********************
@@ -418,7 +540,6 @@
         }
 
         function dateToInt(yyyy_mm_dd) {
-            // "YYYY-MM-DD" -> 20250131
             if (!yyyy_mm_dd) return NaN;
             const s = String(yyyy_mm_dd).trim();
             if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return NaN;
@@ -426,7 +547,6 @@
         }
 
         function anyDateStrToInt(v) {
-            // 엑셀에서 "YYYY-MM-DD"로 넣었지만 혹시 "YYYY.MM.DD" 같은 변형도 처리
             if (!v) return NaN;
             const s = String(v).trim();
             if (!s) return NaN;
@@ -486,6 +606,54 @@
             refreshDropdown(elDongFilter, dongSet);
             refreshDropdown(elMainUseFilter, mainUseSet);
             refreshDropdown(elEtcUseFilter, etcUseSet);
+        }
+
+        // ---- 중복키 규칙(캠페인 내부 중복 방지용) ----
+        // Apex 쪽과 동일 규칙을 맞추기 위해: buildingKey = normalize(name) + "|" + normalize(addr)
+        function normKey(s) {
+            return String(s ?? "").trim().toLowerCase().replaceAll(/\s+/g, " ");
+        }
+
+        function getAddrForKey(p) {
+            // 데이터에 road address가 없으면 loc를 사용 (현재 ZIP 구조 기준)
+            // 필요 시 향후 "도로명대지위치" 같은 필드로 교체 가능
+            return p?.newPlatPlc ?? p?.["도로명대지위치"] ?? p?.platPlc ?? p?.["대지위치"] ?? p?.loc ?? "";
+        }
+
+        function makeBuildingKeyFromPoint(p) {
+            const name = normKey(p?.["건물명"] ?? p?.bldNm__c ?? "");
+            const addr = normKey(getAddrForKey(p));
+            return `${name}|${addr}`;
+        }
+
+        /**********************
+         * 마커 아이콘(색상)
+         **********************/
+        function makeDotIcon(colorHex) {
+            // Leaflet divIcon: 간단 원형 표시
+            const html = `
+        <div style="
+          width:14px;height:14px;border-radius:999px;
+          background:${colorHex};
+          border:2px solid rgba(255,255,255,0.95);
+          box-shadow:0 1px 6px rgba(0,0,0,0.35);
+        "></div>`;
+            return L.divIcon({
+                className: "",
+                html,
+                iconSize: [14, 14],
+                iconAnchor: [7, 7]
+            });
+        }
+
+        const ICON_UNASSIGNED = makeDotIcon("#3b82f6"); // 파랑
+        const ICON_SELECTED = makeDotIcon("#22c55e");   // 초록
+        const ICON_ASSIGNED = makeDotIcon("#9ca3af");   // 회색
+
+        function getMarkerIconByState(key) {
+            if (assignedKeys.has(key)) return ICON_ASSIGNED;
+            if (selectedKeys.has(key)) return ICON_SELECTED;
+            return ICON_UNASSIGNED;
         }
 
         /**********************
@@ -550,7 +718,7 @@
                     throw new Error("ZIP 내부에서 manifest.json을 찾지 못했습니다.");
                 }
                 manifestFile = candidates[0];
-                manifestPath = manifestFile.name; // 예: seoul_geohash6/manifest.json
+                manifestPath = manifestFile.name;
             }
 
             const manifestText = await manifestFile.async("string");
@@ -625,7 +793,7 @@
             }
 
             setProgress(100, `manifest 로드 완료 (셀 ${manifest.length.toLocaleString()}개)`);
-            setStatus("준비완료");
+            setStatus("준비완료", "ok");
 
             scheduleRender();
         }
@@ -682,7 +850,6 @@
             if (!Number.isFinite(from) && !Number.isFinite(to)) return true;
 
             const d = anyDateStrToInt(dateStr);
-            // 날짜 필터가 걸려있는데 값이 없으면 제외
             if (!Number.isFinite(d)) return false;
 
             if (Number.isFinite(from) && d < from) return false;
@@ -731,14 +898,89 @@
         }
 
         /**********************
-         * 마커 생성 + 팝업(요청 12필드)
+         * Salesforce payload 매핑 (사용자 SOQL 기준)
+         **********************/
+        function buildSfPayloadFromPoint(point) {
+            // buildingKey(캠페인 내 중복 방지용)
+            const buildingKey = normKey(makeBuildingKeyFromPoint(point));
+
+            const bldNm = point?.["건물명"] ?? "";
+            const addr = getAddrForKey(point); // loc 기반
+
+            const totArea = toNum(point?.["연면적(m²)"]);
+            const totAreapy = toNum(point?.["연면적(평)"]);
+            const estOnFloor = toNum(point?.["(추정) 지상 층당 면적"]);
+            const grndFloors = toNum(point?.["지상층수"]);
+            const dong = point?.["법정동"] ?? "";
+            const etcPurps = point?.["기타용도"] ?? "";
+            const mainPurpsNm = point?.["주용도"] ?? ""; // 현재 데이터는 명칭만 있음
+
+            // 날짜는 원본을 그대로 전달(서버에서 필요 시 변환)
+            const pmsDay = point?.["허가일"] ?? "";
+            const stcnsDay = point?.["착공일"] ?? "";
+            const useAprDay = point?.["사용승인일"] ?? "";
+
+            return {
+                // --- 브릿지/중복용 ---
+                buildingKey: buildingKey,
+
+                // --- BL_CampaignBuilding__c 주요 필드(현재 오브젝트 구조) ---
+                bldNm__c: bldNm,          // 건물명
+                platPlc__c: addr,         // 대지위치(현 단계는 loc로 대체)
+                newPlatPlc__c: addr,      // 도로명대지위치(현 단계는 loc로 대체)
+                dong__c: dong,            // 동
+                grndFlrCnt__c: Number.isFinite(grndFloors) ? Math.trunc(grndFloors) : null,
+                ugrndFlrCnt__c: null,
+
+                // --- 사용자가 준 SOQL 기반 확장 필드(서버 DTO에 없어도 무시됨) ---
+                totArea__c: Number.isFinite(totArea) ? totArea : null,
+                totAreapy__c: Number.isFinite(totAreapy) ? totAreapy : null,
+                estimated_onfloorSurfaceArea__c: Number.isFinite(estOnFloor) ? estOnFloor : null,
+                etcPurps__c: etcPurps,
+                mainPurpsCdNm__c: mainPurpsNm,
+                pmsDay__c: pmsDay,
+                stcnsDay__c: stcnsDay,
+                useAprDay__c: useAprDay,
+
+                // (참고용) 지도 좌표도 함께 전달
+                lat: Number(point?.lat),
+                lng: Number(point?.lng)
+            };
+        }
+
+        /**********************
+         * 마커 생성 + 팝업
          **********************/
         function buildMarker(point) {
             const lat = Number(point?.lat);
             const lng = Number(point?.lng);
             if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
 
-            const m = L.marker([lat, lng]);
+            const key = normKey(makeBuildingKeyFromPoint(point));
+            const isAssigned = assignedKeys.has(key);
+            const isSelected = selectedKeys.has(key);
+
+            const m = L.marker([lat, lng], { icon: getMarkerIconByState(key) });
+
+            // 클릭: 선택 토글(할당된 것은 선택 불가)
+            m.on("click", (ev) => {
+                // 팝업 열림과 선택 토글이 같이 일어나도 되지만, UX가 불편하면 stopPropagation을 쓰셔도 됩니다.
+                if (isAssigned) {
+                    setProgress(0, "이미 캠페인에 포함된 건물입니다.");
+                    return;
+                }
+
+                if (selectedKeys.has(key)) {
+                    selectedKeys.delete(key);
+                    selectedPayloadByKey.delete(key);
+                } else {
+                    selectedKeys.add(key);
+                    selectedPayloadByKey.set(key, buildSfPayloadFromPoint(point));
+                }
+
+                refreshCampaignUI();
+                scheduleRender(); // 아이콘 갱신
+            });
 
             const loc = point?.loc ?? "";
             const name = point?.["건물명"] ?? "";
@@ -754,9 +996,14 @@
             const approve = point?.["사용승인일"] ?? "";
             const sfUrl = point?.sfUrl ? String(point.sfUrl) : "";
 
+            const stateText = isAssigned ? "할당됨" : (isSelected ? "선택됨" : "미할당");
+
             const popup = `
         <div style="min-width:290px; font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif; font-size:13px; line-height:1.35;">
-          <div style="font-weight:900; margin-bottom:6px;">${escapeHtml(name || "(건물명 없음)")}</div>
+          <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:6px;">
+            <div style="font-weight:900;">${escapeHtml(name || "(건물명 없음)")}</div>
+            <div style="font-size:12px; color:#555;">상태: <b>${escapeHtml(stateText)}</b></div>
+          </div>
           <div style="margin-bottom:10px; color:#444;">${escapeHtml(loc || "(loc 없음)")}</div>
 
           <div style="display:grid; grid-template-columns: 120px 1fr; gap:4px 10px;">
@@ -868,7 +1115,12 @@
                     sf: elStartFrom.value || "",
                     st: elStartTo.value || "",
                     af: elApproveFrom.value || "",
-                    at: elApproveTo.value || ""
+                    at: elApproveTo.value || "",
+
+                    // 선택/할당 상태가 바뀌면 아이콘도 바뀌므로 signature에 포함
+                    // (빈번히 바뀌는 값이지만 1단계 구동에선 단순성이 중요)
+                    sel: Array.from(selectedKeys).sort().join(","),
+                    asg: Array.from(assignedKeys).sort().join(",")
                 });
 
                 for (const cell of needed) {
@@ -907,8 +1159,10 @@
                 refreshDropdown(elMainUseFilter, mainUseSet);
                 refreshDropdown(elEtcUseFilter, etcUseSet);
 
-                setStatus("표시중");
+                setStatus("표시중", "ok");
                 setProgress(0, `표시중: ${totalAdded.toLocaleString()} pts / 셀 ${needed.length.toLocaleString()}개`);
+
+                refreshCampaignUI();
             } finally {
                 renderInFlight = false;
             }
@@ -935,6 +1189,75 @@
         }
 
         /**********************
+         * Salesforce postMessage (수신/송신)
+         **********************/
+        function parentPost(payload) {
+            try {
+                window.parent.postMessage(payload, "*");
+            } catch (e) { }
+        }
+
+        function applyAssignedKeys(list) {
+            assignedKeys.clear();
+            for (const k of (Array.isArray(list) ? list : [])) {
+                assignedKeys.add(normKey(k));
+            }
+
+            // 할당된 키가 선택에 남아있으면 제거(상태 우선순위: ASSIGNED > SELECTED)
+            for (const k of Array.from(selectedKeys)) {
+                if (assignedKeys.has(k)) {
+                    selectedKeys.delete(k);
+                    selectedPayloadByKey.delete(k);
+                }
+            }
+            refreshCampaignUI();
+            scheduleRender();
+        }
+
+        window.addEventListener("message", (event) => {
+            const data = event.data || {};
+            if (!data.type) return;
+
+            if (data.type === "BL_INIT") {
+                currentCampaignId = data.campaignId || null;
+                applyAssignedKeys(data.assignedKeys || []);
+                setStatus("SF 연결됨", "ok");
+                setProgress(0, "캠페인 정보를 수신했습니다.");
+                return;
+            }
+
+            if (data.type === "BL_ASSIGNED_KEYS") {
+                // 필요 시 VF가 별도로 보내는 케이스도 지원
+                if (data.campaignId) currentCampaignId = data.campaignId;
+                applyAssignedKeys(data.assignedKeys || []);
+                setProgress(0, "할당 상태를 갱신했습니다.");
+                return;
+            }
+
+            if (data.type === "BL_ADD_BUILDINGS_RESULT") {
+                if (data.campaignId) currentCampaignId = data.campaignId;
+                if (Array.isArray(data.assignedKeys)) {
+                    applyAssignedKeys(data.assignedKeys);
+                }
+                setProgress(0, data.message || "완료");
+                if (data.status === "ERROR") setStatus("오류", "err");
+                else setStatus("표시중", "ok");
+                return;
+            }
+
+            if (data.type === "BL_ERROR") {
+                setError(data.message || "오류");
+                setStatus("오류", "err");
+                return;
+            }
+        });
+
+        // iframe 준비 신호(부모가 이걸 보고 INIT를 보내도록 구성할 수 있음)
+        function announceReady() {
+            parentPost({ type: "BL_READY", version: 1, hint: EXPECTED_PARENT_HINT });
+        }
+
+        /**********************
          * 이벤트
          **********************/
         btnReset.addEventListener("click", async () => {
@@ -954,12 +1277,63 @@
             elStats.textContent = "-";
             clearDropdownSets();
 
+            // 선택 상태는 유지할지/지울지 정책이 있지만, 1단계는 지우는 편이 안전합니다.
+            selectedKeys.clear();
+            selectedPayloadByKey.clear();
+            refreshCampaignUI();
+
             try {
                 await loadZipAndManifest();
             } catch (e) {
                 setError(e.message || String(e));
-                setStatus("오류");
+                setStatus("오류", "err");
             }
+        });
+
+        btnClearSelected.addEventListener("click", () => {
+            selectedKeys.clear();
+            selectedPayloadByKey.clear();
+            refreshCampaignUI();
+            scheduleRender();
+            setProgress(0, "선택을 해제했습니다.");
+        });
+
+        btnAddSelected.addEventListener("click", () => {
+            if (!currentCampaignId) {
+                setError("캠페인 컨텍스트가 없습니다. Salesforce 탭에서 캠페인(id)로 진입했는지 확인하세요.");
+                setStatus("오류", "err");
+                return;
+            }
+            if (selectedKeys.size === 0) {
+                setProgress(0, "선택된 건물이 없습니다.");
+                return;
+            }
+
+            // 전송 payload 구성(선택 당시 저장한 payload 사용)
+            const buildings = [];
+            for (const k of selectedKeys) {
+                if (assignedKeys.has(k)) continue;
+                const payload = selectedPayloadByKey.get(k);
+                if (payload) buildings.push(payload);
+            }
+
+            if (buildings.length === 0) {
+                setProgress(0, "전송할 선택 건물이 없습니다.");
+                return;
+            }
+
+            const requestId = String(Date.now());
+
+            parentPost({
+                type: "BL_ADD_BUILDINGS",
+                version: 1,
+                requestId,
+                campaignId: currentCampaignId,
+                buildings
+            });
+
+            setProgress(0, `Salesforce로 전송 중... (${buildings.length.toLocaleString()}개)`);
+            setStatus("전송중", "warn");
         });
 
         // 필터 변경 시 즉시 렌더
@@ -1028,16 +1402,23 @@
          * 시작
          **********************/
         initMap();
-        setStatus("자동 로드");
+        refreshCampaignUI();
+
+        setStatus("자동 로드", "warn");
         setProgress(0, "데이터를 불러오는 중...");
+
+        // iframe 준비 신호
+        announceReady();
 
         // 실무 탭용: 페이지 진입 시 자동 로드
         (async () => {
             try {
                 await loadZipAndManifest();
+                setStatus("표시중", "ok");
+                setProgress(0, "지도 준비 완료. (Salesforce에서 캠페인 정보를 수신하면 색상이 반영됩니다.)");
             } catch (e) {
                 setError(e.message || String(e));
-                setStatus("오류");
+                setStatus("오류", "err");
             }
         })();
     </script>
