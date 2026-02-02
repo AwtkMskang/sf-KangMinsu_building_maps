@@ -112,6 +112,26 @@
     }
 
     /**********************
+     * Bridge state (Token + Parent Origin)
+     **********************/
+    let parentOrigin = "*";     // BL_INIT 수신 후 event.origin으로 고정
+    let bridgeToken = null;     // BL_INIT으로 받음
+    let vfReady = false;
+
+    function postToParent(payload) {
+      // VF가 실제 origin을 알려주기 전에는 '*'로 보내되, 이후엔 고정 origin 사용
+      window.parent.postMessage(payload, parentOrigin || "*");
+    }
+
+    function logRecv(tag, event, data) {
+      console.log(tag, {
+        origin: event.origin,
+        source: event.source,
+        data
+      });
+    }
+
+    /**********************
      * Map init
      **********************/
     const map = L.map("map", { preferCanvas: true }).setView([37.5665, 126.9780], 12);
@@ -172,7 +192,7 @@
     }
 
     /**********************
-     * 마커 아이콘(간단 버전)
+     * 마커 아이콘
      **********************/
     function makeDotIcon(colorHex) {
       const html = `<div style="
@@ -201,7 +221,6 @@
       const key = normKey(makeBuildingKeyFromPoint(point));
       const m = L.marker([lat, lng], { icon: iconFor(key) });
 
-      // ✅ 팝업 안 사라지도록: 클릭 때 전체 재렌더링 금지, setIcon만
       m.on("click", (ev) => {
         if (ev?.originalEvent) L.DomEvent.stopPropagation(ev);
 
@@ -222,7 +241,6 @@
         refreshUI();
       });
 
-      // (팝업 내용은 기존 그대로 두셔도 됩니다)
       m.bindPopup(`<div style="min-width:240px;"><b>${String(point?.["건물명"]||"")}</b></div>`);
       return m;
     }
@@ -232,17 +250,19 @@
      **********************/
     const pending = new Map(); // requestId -> timeoutId
 
-    function parentPost(payload) {
-      window.parent.postMessage(payload, "*");
-    }
-
     function sendAddBuildings(buildings) {
       const requestId = String(Date.now());
       setError("");
       setStatus("전송중", "warn");
       setProgress(0, `Salesforce로 전송 중... (${buildings.length}개)`);
 
-      // 30초 타임아웃
+      if (!bridgeToken) {
+        setStatus("오류", "err");
+        setError("브릿지 토큰이 없습니다. (BL_INIT 수신 전)");
+        console.log("Bridge token missing. Did VF send BL_INIT?");
+        return;
+      }
+
       const t = window.setTimeout(() => {
         pending.delete(requestId);
         setStatus("오류", "err");
@@ -250,11 +270,11 @@
       }, 30000);
       pending.set(requestId, t);
 
-      parentPost({
+      postToParent({
         type: "BL_ADD_BUILDINGS",
+        token: bridgeToken,
         requestId,
-        // VF 정책상 URL campaignId만 신뢰하므로, 여기서는 참고용으로만 보냅니다.
-        campaignId: currentCampaignId,
+        campaignId: currentCampaignId, // 참고용(신뢰는 VF가 가진 campaignId만)
         buildings
       });
     }
@@ -264,7 +284,6 @@
       for (const k of (Array.isArray(list) ? list : [])) {
         if (k) assignedKeys.add(normKey(k));
       }
-      // assigned가 된 건 선택에서 제거
       for (const k of Array.from(selectedKeys)) {
         if (assignedKeys.has(k)) {
           selectedKeys.delete(k);
@@ -278,16 +297,24 @@
       const data = event.data || {};
       if (!data.type) return;
 
+      // ✅ VF -> Map 수신 로그(요청하신 “차단 이유 캡처”용)
+      logRecv("Map recv", event, data);
+
       if (data.type === "BL_INIT") {
+        // VF가 보내는 token을 저장하고, 이후 parentOrigin도 고정(보안 + 안정)
+        parentOrigin = event.origin || "*";
+        bridgeToken = data.payload?.token || null;
+        vfReady = true;
+
         currentCampaignId = data.payload?.campaignId ?? null;
         applyAssignedKeys(data.payload?.assignedKeys ?? []);
         setStatus("표시중", "ok");
         setProgress(0, "캠페인 컨텍스트 수신 완료");
+        console.log("Bridge ready", { parentOrigin, bridgeToken, campaignId: currentCampaignId });
         return;
       }
 
       if (data.type === "BL_ADD_BUILDINGS_ACK") {
-        // 수신 확인: 전송중 문구는 유지하되, “멈춤”이 아닌 상태로 보여주기 용도
         const requestId = data.payload?.requestId;
         if (requestId) setProgress(0, "VF에서 요청을 수신했습니다. 저장 처리 중...");
         return;
@@ -315,7 +342,6 @@
           setStatus("완료", "ok");
           setError("");
           setProgress(0, payload.message || "저장 완료");
-          // 성공 시 선택 비우기
           selectedKeys.clear();
           selectedPayloadByKey.clear();
           refreshUI();
@@ -334,6 +360,11 @@
      **********************/
     btnAddSelected.addEventListener("click", () => {
       if (selectedKeys.size === 0) return;
+      if (!vfReady) {
+        setStatus("대기", "warn");
+        setError("VF 초기화(BL_INIT) 수신 전입니다. 잠시 후 다시 시도하세요.");
+        return;
+      }
       const buildings = Array.from(selectedPayloadByKey.values());
       sendAddBuildings(buildings);
     });
@@ -350,7 +381,10 @@
      **********************/
     refreshUI();
     setStatus("로딩중", "warn");
-    parentPost({ type: "BL_READY", version: 2 });
+
+    // ✅ 최초 핸드셰이크: token 없이 BL_READY
+    postToParent({ type: "BL_READY", version: 3 });
+
     setStatus("표시중", "ok");
   </script>
 </body>
