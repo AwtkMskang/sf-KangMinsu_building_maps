@@ -18,7 +18,7 @@
     #map { position:absolute; inset:0; }
 
     .panel{
-      position:absolute; left:12px; top:12px; width:360px; max-width:calc(100vw - 24px);
+      position:absolute; left:12px; top:12px; width:420px; max-width:calc(100vw - 24px);
       background:rgba(255,255,255,.92);
       border:1px solid rgba(0,0,0,.08);
       border-radius:16px;
@@ -54,6 +54,23 @@
 
     progress{ width:100%; height:10px; }
     .error{ color:#b91c1c; }
+
+    details { border:1px solid rgba(0,0,0,.06); border-radius:12px; padding:8px 10px; background:#fff; }
+    details summary { cursor:pointer; font-weight:700; font-size:12px; }
+    .filters { margin-top:8px; display:grid; grid-template-columns: 1fr 1fr; gap:8px; }
+    .frow { display:flex; flex-direction:column; gap:4px; }
+    .frow label { font-size:11px; color:#444; font-weight:700; }
+    .frow input {
+      border:1px solid #e5e5e5; border-radius:10px; padding:8px 10px; font-size:12px;
+      outline:none;
+    }
+    .filters .span2 { grid-column: span 2; }
+
+    .popupTable { width:100%; border-collapse:collapse; font-size:12px; }
+    .popupTable td { border-top:1px solid #eee; padding:6px 4px; vertical-align:top; }
+    .popupTable td.k { width:40%; color:#555; font-weight:700; }
+    .popupTable td.v { width:60%; color:#111; }
+    .popupTitle { font-weight:800; font-size:13px; margin-bottom:6px; }
   </style>
 </head>
 
@@ -67,7 +84,7 @@
     </div>
 
     <div class="muted small" style="margin-top:4px;">
-      ZIP 1회 다운로드 → 화면 범위(geohash6 셀)만 렌더링(대신 bounds 기반 필터링으로 구현)
+      ZIP 1회 다운로드 → 화면 범위(geohash6 셀)만 렌더링 (bounds + 필터 동시 적용)
     </div>
 
     <div class="hr"></div>
@@ -82,6 +99,120 @@
     <div style="display:flex; gap:8px; margin-top:10px;">
       <button class="primary" id="btnAddSelected">선택 추가</button>
       <button class="danger" id="btnClearSelected">선택 해제</button>
+    </div>
+
+    <div style="margin-top:10px;">
+      <details open>
+        <summary>필터</summary>
+        <div class="filters" id="filters">
+          <!-- 텍스트 -->
+          <div class="frow span2">
+            <label>loc (주소) 포함</label>
+            <input id="f_loc" placeholder="예: 송파구 잠실동" />
+          </div>
+          <div class="frow span2">
+            <label>건물명 포함</label>
+            <input id="f_name" placeholder="예: 교육지원청" />
+          </div>
+
+          <!-- 숫자 -->
+          <div class="frow">
+            <label>연면적(m²) 최소</label>
+            <input id="f_totAreaMin" placeholder="예: 1000" />
+          </div>
+          <div class="frow">
+            <label>연면적(m²) 최대</label>
+            <input id="f_totAreaMax" placeholder="예: 50000" />
+          </div>
+
+          <div class="frow">
+            <label>연면적(평) 최소</label>
+            <input id="f_totPyMin" placeholder="예: 300" />
+          </div>
+          <div class="frow">
+            <label>연면적(평) 최대</label>
+            <input id="f_totPyMax" placeholder="예: 15000" />
+          </div>
+
+          <div class="frow">
+            <label>(추정) 지상 층당 면적 최소</label>
+            <input id="f_onfloorMin" placeholder="예: 50" />
+          </div>
+          <div class="frow">
+            <label>(추정) 지상 층당 면적 최대</label>
+            <input id="f_onfloorMax" placeholder="예: 1000" />
+          </div>
+
+          <div class="frow">
+            <label>지상층수 최소</label>
+            <input id="f_flrMin" placeholder="예: 3" />
+          </div>
+          <div class="frow">
+            <label>지상층수 최대</label>
+            <input id="f_flrMax" placeholder="예: 80" />
+          </div>
+
+          <!-- 텍스트 -->
+          <div class="frow">
+            <label>법정동 포함</label>
+            <input id="f_dong" placeholder="예: 잠실동" />
+          </div>
+          <div class="frow">
+            <label>기타용도 포함</label>
+            <input id="f_etcPurps" placeholder="예: 업무시설" />
+          </div>
+
+          <div class="frow">
+            <label>주용도 포함</label>
+            <input id="f_mainPurps" placeholder="예: 업무시설" />
+          </div>
+          <div class="frow">
+            <label>대장구분코드명 포함</label>
+            <input id="f_ledgGbn" placeholder="예: 일반" />
+          </div>
+
+          <div class="frow">
+            <label>대장종류코드명 포함</label>
+            <input id="f_ledgKind" placeholder="예: 일반건축물" />
+          </div>
+          <div class="frow">
+            <label> </label>
+            <input disabled value=" " />
+          </div>
+
+          <!-- 날짜 -->
+          <div class="frow">
+            <label>허가일 From (YYYYMMDD)</label>
+            <input id="f_pmsFrom" placeholder="예: 19800101" />
+          </div>
+          <div class="frow">
+            <label>허가일 To (YYYYMMDD)</label>
+            <input id="f_pmsTo" placeholder="예: 20261231" />
+          </div>
+
+          <div class="frow">
+            <label>착공일 From (YYYYMMDD)</label>
+            <input id="f_stcFrom" placeholder="예: 19800101" />
+          </div>
+          <div class="frow">
+            <label>착공일 To (YYYYMMDD)</label>
+            <input id="f_stcTo" placeholder="예: 20261231" />
+          </div>
+
+          <div class="frow">
+            <label>사용승인일 From (YYYYMMDD)</label>
+            <input id="f_useFrom" placeholder="예: 19800101" />
+          </div>
+          <div class="frow">
+            <label>사용승인일 To (YYYYMMDD)</label>
+            <input id="f_useTo" placeholder="예: 20261231" />
+          </div>
+
+          <div class="frow span2">
+            <button id="btnResetFilters" type="button">필터 초기화</button>
+          </div>
+        </div>
+      </details>
     </div>
 
     <div style="margin-top:10px;">
@@ -116,6 +247,7 @@
     const elError = document.getElementById("errorText");
     const btnAddSelected = document.getElementById("btnAddSelected");
     const btnClearSelected = document.getElementById("btnClearSelected");
+    const btnResetFilters = document.getElementById("btnResetFilters");
 
     function setStatus(text, cls) {
       elStatus.textContent = text;
@@ -158,12 +290,13 @@
 
     /**********************
      * 선택/할당
+     * ✅ key = BuildingLibrary Id
      **********************/
     let currentCampaignId = null;
 
-    const assignedKeys = new Set(); // "name|addr" (lower normalized)
-    const selectedKeys = new Set(); // same as above
-    const selectedPayloadByKey = new Map(); // key -> payload for SF
+    const assignedKeys = new Set(); // buildingLibraryId
+    const selectedKeys = new Set(); // buildingLibraryId
+    const selectedPayloadByKey = new Map(); // id -> payload for SF
 
     function refreshUI(screenCount = null) {
       elCampaign.textContent = "Campaign: " + (currentCampaignId ? String(currentCampaignId) : "-");
@@ -175,36 +308,136 @@
       btnClearSelected.disabled = selectedKeys.size === 0;
     }
 
-    function normKey(s) {
+    function normText(s) {
       return String(s ?? "").trim().toLowerCase().replace(/\s+/g, " ");
     }
 
-    function getAddrForKey(p) {
-      return p?.newPlatPlc ?? p?.["도로명대지위치"] ?? p?.platPlc ?? p?.["대지위치"] ?? p?.loc ?? "";
+    function getIdForKey(p) {
+      return String(p?.Id ?? p?.id ?? "").trim();
     }
 
-    function makeBuildingKeyFromPoint(p) {
-      const name = normKey(p?.["건물명"] ?? p?.bldNm__c ?? p?.bldNm ?? "");
-      const addr = normKey(getAddrForKey(p));
-      return `${name}|${addr}`;
+    /**********************
+     * 필터 상태
+     **********************/
+    const filterEls = {
+      loc: document.getElementById("f_loc"),
+      name: document.getElementById("f_name"),
+      totAreaMin: document.getElementById("f_totAreaMin"),
+      totAreaMax: document.getElementById("f_totAreaMax"),
+      totPyMin: document.getElementById("f_totPyMin"),
+      totPyMax: document.getElementById("f_totPyMax"),
+      onfloorMin: document.getElementById("f_onfloorMin"),
+      onfloorMax: document.getElementById("f_onfloorMax"),
+      flrMin: document.getElementById("f_flrMin"),
+      flrMax: document.getElementById("f_flrMax"),
+      dong: document.getElementById("f_dong"),
+      etcPurps: document.getElementById("f_etcPurps"),
+      mainPurps: document.getElementById("f_mainPurps"),
+      ledgGbn: document.getElementById("f_ledgGbn"),
+      ledgKind: document.getElementById("f_ledgKind"),
+      pmsFrom: document.getElementById("f_pmsFrom"),
+      pmsTo: document.getElementById("f_pmsTo"),
+      stcFrom: document.getElementById("f_stcFrom"),
+      stcTo: document.getElementById("f_stcTo"),
+      useFrom: document.getElementById("f_useFrom"),
+      useTo: document.getElementById("f_useTo"),
+    };
+
+    function parseNum(v) {
+      const s = String(v ?? "").trim().replace(/,/g, "");
+      if (!s) return null;
+      const n = Number(s);
+      return Number.isFinite(n) ? n : null;
     }
 
+    function parseYMD(v) {
+      const s = String(v ?? "").trim();
+      if (!s) return null;
+      // supports YYYYMMDD or YYYY-MM-DD
+      let y, m, d;
+      if (/^\d{8}$/.test(s)) {
+        y = Number(s.slice(0,4));
+        m = Number(s.slice(4,6));
+        d = Number(s.slice(6,8));
+      } else if (/^\d{4}-\d{2}-\d{2}/.test(s)) {
+        const p = s.split("-");
+        y = Number(p[0]); m = Number(p[1]); d = Number(p[2]);
+      } else {
+        return null;
+      }
+      if (!Number.isFinite(y) || !Number.isFinite(m) || !Number.isFinite(d)) return null;
+      // UTC 기준으로 비교(시간 영향 제거)
+      return Date.UTC(y, m-1, d);
+    }
+
+    function textContains(hay, needle) {
+      const n = normText(needle);
+      if (!n) return true;
+      return normText(hay).includes(n);
+    }
+
+    function numInRange(v, minStr, maxStr) {
+      const n = parseNum(v);
+      const min = parseNum(minStr);
+      const max = parseNum(maxStr);
+      if (min !== null && (n === null || n < min)) return false;
+      if (max !== null && (n === null || n > max)) return false;
+      return true;
+    }
+
+    function dateInRange(v, fromStr, toStr) {
+      const t = parseYMD(v);
+      const from = parseYMD(fromStr);
+      const to = parseYMD(toStr);
+      if (from !== null && (t === null || t < from)) return false;
+      if (to !== null && (t === null || t > to)) return false;
+      return true;
+    }
+
+    function passesFilters(p) {
+      // 텍스트
+      if (!textContains(p?.loc, filterEls.loc.value)) return false;
+      if (!textContains(p?.["건물명"], filterEls.name.value)) return false;
+      if (!textContains(p?.["법정동"], filterEls.dong.value)) return false;
+      if (!textContains(p?.["기타용도"], filterEls.etcPurps.value)) return false;
+      if (!textContains(p?.["주용도"], filterEls.mainPurps.value)) return false;
+      if (!textContains(p?.["대장구분코드명"], filterEls.ledgGbn.value)) return false;
+      if (!textContains(p?.["대장종류코드명"], filterEls.ledgKind.value)) return false;
+
+      // 숫자
+      if (!numInRange(p?.["연면적(m²)"], filterEls.totAreaMin.value, filterEls.totAreaMax.value)) return false;
+      if (!numInRange(p?.["연면적(평)"], filterEls.totPyMin.value, filterEls.totPyMax.value)) return false;
+      if (!numInRange(p?.["(추정) 지상 층당 면적"], filterEls.onfloorMin.value, filterEls.onfloorMax.value)) return false;
+      if (!numInRange(p?.["지상층수"], filterEls.flrMin.value, filterEls.flrMax.value)) return false;
+
+      // 날짜
+      if (!dateInRange(p?.["허가일"], filterEls.pmsFrom.value, filterEls.pmsTo.value)) return false;
+      if (!dateInRange(p?.["착공일"], filterEls.stcFrom.value, filterEls.stcTo.value)) return false;
+      if (!dateInRange(p?.["사용승인일"], filterEls.useFrom.value, filterEls.useTo.value)) return false;
+
+      return true;
+    }
+
+    function wireFilterEvents() {
+      Object.values(filterEls).forEach(el => {
+        el.addEventListener("input", () => scheduleRender());
+      });
+      btnResetFilters.addEventListener("click", () => {
+        Object.values(filterEls).forEach(el => el.value = "");
+        scheduleRender();
+      });
+    }
+
+    /**********************
+     * payload (선택추가 시 SF로 보낼 값)
+     * ✅ BuildingLibrary__c에 들어갈 Id 포함
+     **********************/
     function buildSfPayloadFromPoint(point) {
       return {
-        bldNm__c: point?.["건물명"] ?? point?.bldNm__c ?? "",
-        platPlc__c: point?.platPlc ?? point?.platPlc__c ?? "",
-        newPlatPlc__c: point?.newPlatPlc ?? point?.newPlatPlc__c ?? "",
-        dong__c: point?.["법정동"] ?? point?.dong ?? point?.dong__c ?? "",
-        grndFlrCnt__c: point?.["지상층수"] ?? point?.grndFlrCnt ?? point?.grndFlrCnt__c ?? null,
-        ugrndFlrCnt__c: point?.ugrndFlrCnt ?? point?.ugrndFlrCnt__c ?? null,
-        totArea__c: point?.["연면적(m²)"] ?? point?.totArea__c ?? null,
-        totAreapy__c: point?.["연면적(평)"] ?? point?.totAreapy__c ?? null,
-        estimated_onfloorSurfaceArea__c: point?.["(추정) 지상 층당 면적"] ?? point?.estimated_onfloorSurfaceArea__c ?? null,
-        etcPurps__c: point?.["기타용도"] ?? point?.etcPurps__c ?? "",
-        mainPurpsCdNm__c: point?.["주용도"] ?? point?.mainPurpsCdNm__c ?? "",
-        pmsDay__c: point?.["허가일"] ?? point?.pmsDay__c ?? "",
-        stcnsDay__c: point?.["착공일"] ?? point?.stcnsDay__c ?? "",
-        useAprDay__c: point?.["사용승인일"] ?? point?.useAprDay__c ?? ""
+        Id: String(point?.Id ?? point?.id ?? "").trim(),
+        loc: point?.loc ?? "",
+        "건물명": point?.["건물명"] ?? "",
+        // 필요 시 추후 확장 가능 (현재 Apex는 Id/loc/건물명만 사용)
       };
     }
 
@@ -224,22 +457,21 @@
     const ICON_SELECTED   = makeDotIcon("#22c55e");
     const ICON_ASSIGNED   = makeDotIcon("#9ca3af");
 
-    function iconFor(key) {
-      if (assignedKeys.has(key)) return ICON_ASSIGNED;
-      if (selectedKeys.has(key)) return ICON_SELECTED;
+    function iconFor(idKey) {
+      if (assignedKeys.has(idKey)) return ICON_ASSIGNED;
+      if (selectedKeys.has(idKey)) return ICON_SELECTED;
       return ICON_UNASSIGNED;
     }
 
     /**********************
      * 데이터 로딩 (ZIP -> points[])
      **********************/
-    let allPoints = [];          // 원시 포인트 배열 (lat/lng + 속성)
-    let allMarkers = [];         // { key, lat, lng, marker, point }
+    let allPoints = [];
+    let allMarkers = []; // { key(id), lat, lng, marker, point }
     let dataLoaded = false;
     let rendering = false;
 
     function detectLatLng(obj) {
-      // 가능한 필드 후보들을 최대한 넓게 지원
       const lat =
         obj.lat ?? obj.latitude ?? obj.Lat ?? obj.LAT ??
         obj["위도"] ?? obj["lat"] ?? obj["LATITUDE"];
@@ -253,7 +485,6 @@
     }
 
     function parseCSV(text) {
-      // 아주 단순 CSV 파서(따옴표 내부 콤마 케이스는 최소 처리)
       const lines = text.split(/\r?\n/).filter(Boolean);
       if (lines.length < 2) return [];
       const header = splitCSVLine(lines[0]);
@@ -261,9 +492,7 @@
       for (let i = 1; i < lines.length; i++) {
         const cols = splitCSVLine(lines[i]);
         const row = {};
-        for (let j = 0; j < header.length; j++) {
-          row[header[j]] = cols[j] ?? "";
-        }
+        for (let j = 0; j < header.length; j++) row[header[j]] = cols[j] ?? "";
         out.push(row);
       }
       return out;
@@ -291,7 +520,6 @@
     function normalizePoint(obj) {
       const ll = detectLatLng(obj);
       if (!ll) return null;
-      // lat/lng를 표준화하여 저장
       return { ...obj, lat: ll.lat, lng: ll.lng };
     }
 
@@ -308,11 +536,8 @@
 
       const zip = await JSZip.loadAsync(buf);
       const files = Object.keys(zip.files).filter(n => !zip.files[n].dir);
-
       if (files.length === 0) throw new Error("ZIP has no files");
 
-      // 파일을 전부 읽어서 points로 합칩니다.
-      // (용량이 크면 시간이 걸리므로 진행률 표시)
       let loaded = 0;
       const points = [];
 
@@ -323,16 +548,12 @@
         let rows = [];
         const t = text.trim();
         try {
-          if (t.startsWith("[")) {
-            rows = JSON.parse(t);
-          } else if (t.startsWith("{")) {
+          if (t.startsWith("[")) rows = JSON.parse(t);
+          else if (t.startsWith("{")) {
             const one = JSON.parse(t);
             rows = Array.isArray(one) ? one : (one.features ? one.features.map(x => x.properties || x) : [one]);
-          } else {
-            rows = parseCSV(text);
-          }
+          } else rows = parseCSV(text);
         } catch (e) {
-          // 포맷 불명 파일은 스킵 (필요하면 콘솔로 확인)
           console.log("Skip file parse error:", fname, e);
           rows = [];
         }
@@ -354,55 +575,93 @@
       console.log("Data loaded", { files: files.length, points: allPoints.length });
     }
 
-    function buildAllMarkersOnce() {
-      allMarkers = [];
-
-      for (const p of allPoints) {
-        const key = normKey(makeBuildingKeyFromPoint(p));
-        if (!key || key === "|") continue;
-
-        const m = L.marker([p.lat, p.lng], { icon: iconFor(key) });
-
-        m.on("click", (ev) => {
-          if (ev?.originalEvent) L.DomEvent.stopPropagation(ev);
-
-          if (assignedKeys.has(key)) {
-            setProgress(0, "이미 캠페인에 포함된 건물입니다.");
-            return;
-          }
-
-          if (selectedKeys.has(key)) {
-            selectedKeys.delete(key);
-            selectedPayloadByKey.delete(key);
-          } else {
-            selectedKeys.add(key);
-            selectedPayloadByKey.set(key, buildSfPayloadFromPoint(p));
-          }
-
-          m.setIcon(iconFor(key));
-          refreshUI(clusterLayer.getLayers().length);
-        });
-
-        const title = (p["건물명"] ?? p.bldNm__c ?? p.bldNm ?? "").toString();
-        const addr = getAddrForKey(p).toString();
-        m.bindPopup(`<div style="min-width:240px;"><b>${escapeHtml(title)}</b><div class="small muted">${escapeHtml(addr)}</div></div>`);
-
-        allMarkers.push({ key, lat: p.lat, lng: p.lng, marker: m, point: p });
-      }
-      console.log("Markers built", { markers: allMarkers.length });
-    }
-
     function escapeHtml(s) {
       return String(s ?? "")
         .replaceAll("&","&amp;").replaceAll("<","&lt;")
         .replaceAll(">","&gt;").replaceAll('"',"&quot;").replaceAll("'","&#39;");
     }
 
-    function refreshMarkerIconsForAssignedSelected() {
-      // assigned/selected 변화 반영
-      for (const it of allMarkers) {
-        it.marker.setIcon(iconFor(it.key));
+    function buildPopupHtml(p) {
+      const cols = [
+        ["loc", p?.loc],
+        ["건물명", p?.["건물명"]],
+        ["연면적(m²)", p?.["연면적(m²)"]],
+        ["연면적(평)", p?.["연면적(평)"]],
+        ["(추정) 지상 층당 면적", p?.["(추정) 지상 층당 면적"]],
+        ["지상층수", p?.["지상층수"]],
+        ["법정동", p?.["법정동"]],
+        ["기타용도", p?.["기타용도"]],
+        ["주용도", p?.["주용도"]],
+        ["허가일", p?.["허가일"]],
+        ["대장구분코드명", p?.["대장구분코드명"]],
+        ["대장종류코드명", p?.["대장종류코드명"]],
+        ["착공일", p?.["착공일"]],
+        ["사용승인일", p?.["사용승인일"]],
+      ];
+
+      const sfUrl = String(p?.sfUrl ?? "").trim();
+      const idStr = getIdForKey(p);
+
+      const title = escapeHtml(String(p?.["건물명"] ?? "").trim() || "(이름 없음)");
+      const linkHtml = sfUrl
+        ? `<a href="${escapeHtml(sfUrl)}" target="_blank" rel="noopener noreferrer">Salesforce 열기</a>`
+        : `<span class="muted">-</span>`;
+
+      const rowsHtml = cols.map(([k,v]) => {
+        const vv = (v === null || v === undefined || String(v).trim() === "") ? "-" : escapeHtml(String(v));
+        return `<tr><td class="k">${escapeHtml(k)}</td><td class="v">${vv}</td></tr>`;
+      }).join("");
+
+      return `
+        <div style="min-width:300px;">
+          <div class="popupTitle">${title}</div>
+          <div class="small muted" style="margin-bottom:8px;">Id: ${escapeHtml(idStr)}</div>
+          <table class="popupTable">
+            <tr><td class="k">sfUrl</td><td class="v">${linkHtml}</td></tr>
+            ${rowsHtml}
+          </table>
+          <div class="small muted" style="margin-top:8px;">마커 클릭으로 선택/해제됩니다.</div>
+        </div>
+      `;
+    }
+
+    function buildAllMarkersOnce() {
+      allMarkers = [];
+
+      for (const p of allPoints) {
+        const idKey = getIdForKey(p);
+        if (!idKey) continue;
+
+        const m = L.marker([p.lat, p.lng], { icon: iconFor(idKey) });
+
+        m.on("click", (ev) => {
+          if (ev?.originalEvent) L.DomEvent.stopPropagation(ev);
+
+          if (assignedKeys.has(idKey)) {
+            setProgress(0, "이미 캠페인에 포함된 건물입니다.");
+            return;
+          }
+
+          if (selectedKeys.has(idKey)) {
+            selectedKeys.delete(idKey);
+            selectedPayloadByKey.delete(idKey);
+          } else {
+            selectedKeys.add(idKey);
+            selectedPayloadByKey.set(idKey, buildSfPayloadFromPoint(p));
+          }
+
+          m.setIcon(iconFor(idKey));
+          refreshUI(clusterLayer.getLayers().length);
+        });
+
+        m.bindPopup(buildPopupHtml(p));
+        allMarkers.push({ key: idKey, lat: p.lat, lng: p.lng, marker: m, point: p });
       }
+      console.log("Markers built", { markers: allMarkers.length });
+    }
+
+    function refreshMarkerIconsForAssignedSelected() {
+      for (const it of allMarkers) it.marker.setIcon(iconFor(it.key));
     }
 
     function renderMarkersInView() {
@@ -413,7 +672,10 @@
       const inView = [];
 
       for (const it of allMarkers) {
-        if (b.contains([it.lat, it.lng])) inView.push(it);
+        if (!b.contains([it.lat, it.lng])) continue;
+        if (!passesFilters(it.point)) continue;
+
+        inView.push(it);
         if (inView.length >= MAX_MARKERS_ON_SCREEN) break;
       }
 
@@ -436,13 +698,15 @@
     map.on("moveend zoomend", scheduleRender);
 
     /**********************
-     * VF 브릿지: assignedKeys 반영
+     * VF 브릿지: assignedKeys 반영 (Id 기반)
      **********************/
     function applyAssignedKeys(list) {
       assignedKeys.clear();
       for (const k of (Array.isArray(list) ? list : [])) {
-        if (k) assignedKeys.add(normKey(k));
+        const kk = String(k ?? "").trim();
+        if (kk) assignedKeys.add(kk);
       }
+
       // 선택 중 assigned로 바뀐 것은 제거
       for (const k of Array.from(selectedKeys)) {
         if (assignedKeys.has(k)) {
@@ -450,6 +714,7 @@
           selectedPayloadByKey.delete(k);
         }
       }
+
       if (dataLoaded) {
         refreshMarkerIconsForAssignedSelected();
         scheduleRender();
@@ -581,11 +846,13 @@
      **********************/
     (async function boot() {
       try {
+        wireFilterEvents();
+
         refreshUI(0);
         setStatus("로딩중", "warn");
 
         // 1) VF에 READY
-        postToParent({ type: "BL_READY", version: 3 });
+        postToParent({ type: "BL_READY", version: 4 });
 
         // 2) 데이터 ZIP 로딩 + 마커 생성
         await loadZipOnce();
