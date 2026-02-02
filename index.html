@@ -580,8 +580,7 @@
     function escapeHtml(s) {
       return String(s ?? "")
         .replaceAll("&","&amp;").replaceAll("<","&lt;")
-        .replaceAll(">","&gt;")
-        .replaceAll('"',"&quot;").replaceAll("'","&#39;");
+        .replaceAll(">","&gt;").replaceAll('"',"&quot;").replaceAll("'","&#39;");
     }
 
     function buildPopupHtml(p) {
@@ -729,7 +728,6 @@
      * 저장 요청/응답 (✅ ACK/RESULT 타임아웃 분리)
      **********************/
     const pending = new Map(); // requestId -> { ackTimer, resultTimer }
-    const requestBuildings = new Map(); // requestId -> buildings array (for campaign modal submit)
 
     function clearTimers(requestId) {
       const key = String(requestId);
@@ -738,7 +736,6 @@
       if (it.ackTimer) clearTimeout(it.ackTimer);
       if (it.resultTimer) clearTimeout(it.resultTimer);
       pending.delete(key);
-      requestBuildings.delete(key);
     }
 
     function armAckTimeout(requestId) {
@@ -778,10 +775,7 @@
         return;
       }
 
-      // 요청에 사용한 buildings 스냅샷 저장(캠페인 모달 제출 시 동일 payload 사용)
-      requestBuildings.set(requestId, buildings);
-
-      // ACK만 짧게 기다린다
+      // ✅ ACK만 짧게 기다린다
       armAckTimeout(requestId);
 
       postToParent({
@@ -816,115 +810,6 @@
     });
 
     /**********************
-     * (NEW) 캠페인 생성 모달 (Map에서 띄움)
-     **********************/
-    // DOM 생성(기존 HTML 변경 최소화를 위해 JS에서 삽입)
-    const modalHtml = `
-      <div id="campModalBackdrop" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,.35); z-index:2147483647; align-items:center; justify-content:center;">
-        <div style="width:min(560px, calc(100vw - 32px)); background:#fff; border-radius:16px; padding:16px; box-shadow:0 10px 30px rgba(0,0,0,.25); font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;">
-          <div style="font-size:18px; font-weight:800; margin-bottom:8px;">캠페인 생성</div>
-          <div id="campModalHint" style="font-size:13px; color:#666; margin-bottom:12px;"></div>
-
-          <div style="display:flex; flex-direction:column; gap:10px;">
-            <div>
-              <div style="font-size:12px; color:#444; font-weight:700; margin-bottom:6px;">캠페인명(Name)</div>
-              <input id="campModalName" style="width:100%; padding:10px; border:1px solid #ddd; border-radius:10px; font-size:13px;" />
-            </div>
-
-            <div>
-              <div style="font-size:12px; color:#444; font-weight:700; margin-bottom:6px;">담당자(Representative)</div>
-              <select id="campModalRep" style="width:100%; padding:10px; border:1px solid #ddd; border-radius:10px; font-size:13px;"></select>
-            </div>
-
-            <div id="campModalErr" style="font-size:12px; color:#b91c1c; min-height:16px;"></div>
-
-            <div style="display:flex; gap:8px; justify-content:flex-end; margin-top:6px;">
-              <button id="campModalCancel" type="button">취소</button>
-              <button id="campModalNext" type="button" class="primary" style="border-radius:10px; padding:8px 10px;">생성 후 저장</button>
-            </div>
-          </div>
-        </div>
-      </div>
-    `;
-    document.body.insertAdjacentHTML("beforeend", modalHtml);
-
-    const campBackdrop = document.getElementById("campModalBackdrop");
-    const campHint = document.getElementById("campModalHint");
-    const campNameInput = document.getElementById("campModalName");
-    const campRepSelect = document.getElementById("campModalRep");
-    const campErr = document.getElementById("campModalErr");
-    const campCancel = document.getElementById("campModalCancel");
-    const campNext = document.getElementById("campModalNext");
-
-    let modalRequestId = null;
-
-    function openCampaignModal(payload) {
-      modalRequestId = String(payload?.requestId || "");
-      const selCount = Number(payload?.selCount || 0);
-      campHint.textContent = `선택한 건물 ${selCount}건을 저장하려면 캠페인을 먼저 생성합니다.`;
-      campErr.textContent = "";
-
-      campNameInput.value = String(payload?.defaultName || "").trim() || `지도선택(${selCount})`;
-
-      const opts = Array.isArray(payload?.representativeOptions) ? payload.representativeOptions : [];
-      campRepSelect.innerHTML = '<option value="">(선택)</option>' + opts.map(o => {
-        const v = escapeHtml(o?.value ?? "");
-        const l = escapeHtml(o?.label ?? "");
-        return `<option value="${v}">${l}</option>`;
-      }).join("");
-
-      campBackdrop.style.display = "flex";
-    }
-
-    function closeCampaignModal() {
-      campBackdrop.style.display = "none";
-      modalRequestId = null;
-    }
-
-    campCancel.addEventListener("click", () => {
-      closeCampaignModal();
-    });
-
-    campNext.addEventListener("click", () => {
-      campErr.textContent = "";
-
-      const rid = String(modalRequestId || "");
-      if (!rid) {
-        campErr.textContent = "요청 식별자(requestId)가 없습니다.";
-        return;
-      }
-
-      const name = String(campNameInput.value || "").trim();
-      const rep = String(campRepSelect.value || "").trim();
-
-      if (!name) { campErr.textContent = "캠페인명을 입력하세요."; return; }
-      if (!rep) { campErr.textContent = "담당자를 선택하세요."; return; }
-
-      const buildings = requestBuildings.get(rid) || [];
-      if (!Array.isArray(buildings) || buildings.length === 0) {
-        campErr.textContent = "저장할 건물 목록이 비어 있습니다. (선택 추가를 다시 실행해주세요.)";
-        return;
-      }
-
-      // VF에게 캠페인 생성 + 저장을 요청
-      postToParent({
-        type: "BL_CREATE_CAMPAIGN_AND_ADD",
-        token: bridgeToken,
-        payload: {
-          token: bridgeToken,
-          requestId: rid,
-          name: name,
-          representativeValue: rep,
-          buildings: buildings
-        }
-      });
-
-      // 모달 닫고 계속 진행(RESULT는 pending resultTimer로 기다림)
-      closeCampaignModal();
-      setProgress(0, "캠페인 생성 요청 전송… (VF 처리 중)");
-    });
-
-    /**********************
      * postMessage 수신
      **********************/
     window.addEventListener("message", (event) => {
@@ -952,24 +837,10 @@
         const it = pending.get(requestId);
         if (it?.ackTimer) clearTimeout(it.ackTimer);
 
-        // 모달 입력/캠페인 생성 시간을 고려해 RESULT는 길게 기다린다
+        // ✅ 모달 입력/캠페인 생성 시간을 고려해 RESULT는 길게 기다린다
         armResultTimeout(requestId);
 
         setProgress(0, "VF에서 요청 수신(ACK). 저장 처리 대기/진행 중...");
-        return;
-      }
-
-      // ✅ NEW: 캠페인 생성 필요(모달을 Map에서 띄움)
-      if (data.type === "BL_NEED_CAMPAIGN") {
-        const payload = data.payload || {};
-        const requestId = String(payload.requestId || "");
-        if (!requestId) return;
-
-        // RESULT 타이머가 아직 없다면(혹시 ACK 순서가 뒤집히는 경우) 여기서도 보장
-        armResultTimeout(requestId);
-
-        openCampaignModal(payload);
-        setProgress(0, "캠페인 생성이 필요합니다. 모달에서 입력 후 저장하세요.");
         return;
       }
 
@@ -977,7 +848,7 @@
         const payload = data.payload || data;
         const requestId = String(payload.requestId || "");
 
-        // ACK/RESULT 타이머 모두 정리
+        // ✅ ACK/RESULT 타이머 모두 정리
         clearTimers(requestId);
 
         if (payload.campaignId) currentCampaignId = payload.campaignId;
