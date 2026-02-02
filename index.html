@@ -234,6 +234,10 @@
     // 너무 무거우면 화면에 올릴 최대 마커 수를 제한
     const MAX_MARKERS_ON_SCREEN = 20000;
 
+    // ✅ 타임아웃 정책 (모달 입력시간 고려)
+    const ACK_TIMEOUT_MS = 10 * 1000;          // 10초 안에 ACK가 와야 브릿지 정상
+    const RESULT_TIMEOUT_MS = 10 * 60 * 1000;  // 10분(캠페인 생성 모달 입력 시간 포함)
+
     /**********************
      * DOM helpers
      **********************/
@@ -430,14 +434,12 @@
 
     /**********************
      * payload (선택추가 시 SF로 보낼 값)
-     * ✅ BuildingLibrary__c에 들어갈 Id 포함
      **********************/
     function buildSfPayloadFromPoint(point) {
       return {
         Id: String(point?.Id ?? point?.id ?? "").trim(),
         loc: point?.loc ?? "",
         "건물명": point?.["건물명"] ?? "",
-        // 필요 시 추후 확장 가능 (현재 Apex는 Id/loc/건물명만 사용)
       };
     }
 
@@ -723,9 +725,42 @@
     }
 
     /**********************
-     * 저장 요청/응답
+     * 저장 요청/응답 (✅ ACK/RESULT 타임아웃 분리)
      **********************/
-    const pending = new Map(); // requestId -> timeoutId
+    const pending = new Map(); // requestId -> { ackTimer, resultTimer }
+
+    function clearTimers(requestId) {
+      const key = String(requestId);
+      const it = pending.get(key);
+      if (!it) return;
+      if (it.ackTimer) clearTimeout(it.ackTimer);
+      if (it.resultTimer) clearTimeout(it.resultTimer);
+      pending.delete(key);
+    }
+
+    function armAckTimeout(requestId) {
+      const key = String(requestId);
+      clearTimers(key);
+      const it = {};
+      it.ackTimer = setTimeout(() => {
+        clearTimers(key);
+        setStatus("오류", "err");
+        setError("Timeout: VF로부터 ACK를 받지 못했습니다.");
+      }, ACK_TIMEOUT_MS);
+      pending.set(key, it);
+    }
+
+    function armResultTimeout(requestId) {
+      const key = String(requestId);
+      const it = pending.get(key) || {};
+      if (it.resultTimer) clearTimeout(it.resultTimer);
+      it.resultTimer = setTimeout(() => {
+        clearTimers(key);
+        setStatus("오류", "err");
+        setError("Timeout: VF로부터 RESULT를 받지 못했습니다. (캠페인 생성 모달 입력 시간이 길면 정상적으로 오래 걸릴 수 있으므로, VF/Map 설정을 확인하세요.)");
+      }, RESULT_TIMEOUT_MS);
+      pending.set(key, it);
+    }
 
     function sendAddBuildings(buildings) {
       const requestId = String(Date.now());
@@ -740,12 +775,8 @@
         return;
       }
 
-      const t = window.setTimeout(() => {
-        pending.delete(requestId);
-        setStatus("오류", "err");
-        setError("Timeout: VF로부터 ACK/RESULT를 받지 못했습니다.");
-      }, 30000);
-      pending.set(requestId, t);
+      // ✅ ACK만 짧게 기다린다
+      armAckTimeout(requestId);
 
       postToParent({
         type: "BL_ADD_BUILDINGS",
@@ -802,8 +833,14 @@
       }
 
       if (data.type === "BL_ADD_BUILDINGS_ACK") {
-        const requestId = data.payload?.requestId;
-        if (requestId) setProgress(0, "VF에서 요청 수신(ACK). 저장 처리 중...");
+        const requestId = String(data.payload?.requestId || "");
+        const it = pending.get(requestId);
+        if (it?.ackTimer) clearTimeout(it.ackTimer);
+
+        // ✅ 모달 입력/캠페인 생성 시간을 고려해 RESULT는 길게 기다린다
+        armResultTimeout(requestId);
+
+        setProgress(0, "VF에서 요청 수신(ACK). 저장 처리 대기/진행 중...");
         return;
       }
 
@@ -811,9 +848,8 @@
         const payload = data.payload || data;
         const requestId = String(payload.requestId || "");
 
-        const t = pending.get(requestId);
-        if (t) window.clearTimeout(t);
-        pending.delete(requestId);
+        // ✅ ACK/RESULT 타이머 모두 정리
+        clearTimers(requestId);
 
         if (payload.campaignId) currentCampaignId = payload.campaignId;
         if (Array.isArray(payload.assignedKeys)) applyAssignedKeys(payload.assignedKeys);
