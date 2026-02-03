@@ -71,6 +71,24 @@
     .popupTable td.k { width:40%; color:#555; font-weight:700; }
     .popupTable td.v { width:60%; color:#111; }
     .popupTitle { font-weight:800; font-size:13px; margin-bottom:6px; }
+
+    /* ✅ Popup compact + scroll */
+    .leaflet-popup-content { margin: 10px 12px; }
+    .popupWrap{
+      min-width: 240px;
+      max-width: 280px;
+      max-height: 240px;
+      overflow-y: auto;
+      overflow-x: hidden;
+    }
+    .popupTitle{
+      font-weight: 800;
+      font-size: 13px;
+      margin-bottom: 6px;
+      line-height: 1.2;
+    }
+    .popupTable { font-size: 11px; }
+    .popupTable td { padding: 5px 4px; }
   </style>
 </head>
 
@@ -602,7 +620,6 @@
       ];
 
       const sfUrl = String(p?.sfUrl ?? "").trim();
-      const idStr = getIdForKey(p);
 
       const title = escapeHtml(String(p?.["건물명"] ?? "").trim() || "(이름 없음)");
       const linkHtml = sfUrl
@@ -615,13 +632,14 @@
       }).join("");
 
       return `
-        <div style="min-width:300px;">
+        <div class="popupWrap">
           <div class="popupTitle">${title}</div>
-          <div class="small muted" style="margin-bottom:8px;">Id: ${escapeHtml(idStr)}</div>
+
           <table class="popupTable">
             <tr><td class="k">sfUrl</td><td class="v">${linkHtml}</td></tr>
             ${rowsHtml}
           </table>
+
           <div class="small muted" style="margin-top:8px;">마커 클릭으로 선택/해제됩니다.</div>
         </div>
       `;
@@ -656,7 +674,13 @@
           refreshUI(clusterLayer.getLayers().length);
         });
 
-        m.bindPopup(buildPopupHtml(p));
+        m.bindPopup(buildPopupHtml(p), {
+          maxWidth: 300,
+          autoPan: true,
+          autoPanPadding: [10, 10],
+          closeButton: true
+        });
+
         allMarkers.push({ key: idKey, lat: p.lat, lng: p.lng, marker: m, point: p });
       }
       console.log("Markers built", { markers: allMarkers.length });
