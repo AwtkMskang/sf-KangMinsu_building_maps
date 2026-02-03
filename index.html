@@ -820,11 +820,12 @@
 
       if (data.type === "BL_INIT") {
         parentOrigin = event.origin || "*";
-        bridgeToken = data.payload?.token || null;
+        // ✅ VF 구현 차이 대비: payload.token / bridgeToken / token 모두 허용
+        bridgeToken = data.payload?.token || data.bridgeToken || data.token || null;
         vfReady = true;
 
-        currentCampaignId = data.payload?.campaignId ?? null;
-        applyAssignedKeys(data.payload?.assignedKeys ?? []);
+        currentCampaignId = (data.payload?.campaignId ?? data.campaignId ?? null);
+        applyAssignedKeys(data.payload?.assignedKeys ?? data.assignedKeys ?? []);
 
         setStatus("표시중", "ok");
         setProgress(0, "캠페인 컨텍스트 수신 완료");
@@ -833,7 +834,7 @@
       }
 
       if (data.type === "BL_ADD_BUILDINGS_ACK") {
-        const requestId = String(data.payload?.requestId || "");
+        const requestId = String(data.payload?.requestId || data.requestId || "");
         const it = pending.get(requestId);
         if (it?.ackTimer) clearTimeout(it.ackTimer);
 
