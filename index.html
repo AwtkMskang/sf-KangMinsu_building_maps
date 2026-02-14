@@ -115,8 +115,13 @@
     </div>
 
     <div style="display:flex; gap:8px; margin-top:10px;">
-      <button class="primary" id="btnAddSelected">선택 추가</button>
-      <button class="danger" id="btnClearSelected">선택 해제</button>
+      <button class="primary" id="btnAddSelected" type="button">선택 추가</button>
+      <button class="danger" id="btnClearSelected" type="button">선택 해제</button>
+    </div>
+
+    <div style="display:flex; gap:8px; margin-top:8px;">
+      <button id="btnSelectVisible" type="button">화면 전체 선택</button>
+      <button id="btnBoxSelect" type="button">영역 선택: OFF</button>
     </div>
 
     <div style="margin-top:10px;">
@@ -256,6 +261,9 @@
     const ACK_TIMEOUT_MS = 10 * 1000;          // 10초 안에 ACK가 와야 브릿지 정상
     const RESULT_TIMEOUT_MS = 10 * 60 * 1000;  // 10분(캠페인 생성 모달 입력 시간 포함)
 
+    // ✅ 대량 선택 저장 시 전송 청크 크기(안정용)
+    const SAVE_CHUNK_SIZE = 500;
+
     /**********************
      * DOM helpers
      **********************/
@@ -269,6 +277,8 @@
     const elError = document.getElementById("errorText");
     const btnAddSelected = document.getElementById("btnAddSelected");
     const btnClearSelected = document.getElementById("btnClearSelected");
+    const btnSelectVisible = document.getElementById("btnSelectVisible");
+    const btnBoxSelect = document.getElementById("btnBoxSelect");
     const btnResetFilters = document.getElementById("btnResetFilters");
 
     function setStatus(text, cls) {
@@ -491,6 +501,9 @@
     let dataLoaded = false;
     let rendering = false;
 
+    // ✅ 마지막 렌더 결과(=화면에 보이는 마커 목록) 캐시
+    let lastInViewItems = []; // [{key, lat, lng, marker, point}, ...]
+
     function detectLatLng(obj) {
       const lat =
         obj.lat ?? obj.latitude ?? obj.Lat ?? obj.LAT ??
@@ -690,6 +703,107 @@
       for (const it of allMarkers) it.marker.setIcon(iconFor(it.key));
     }
 
+    /**********************
+     * ✅ 대량 선택(화면 전체 / 영역)
+     **********************/
+    function bulkSelectItems(items, reason) {
+      if (!Array.isArray(items) || items.length === 0) {
+        setProgress(0, (reason || "선택") + ": 대상이 없습니다.");
+        return 0;
+      }
+
+      let added = 0;
+      for (const it of items) {
+        const idKey = String(it?.key ?? "").trim();
+        if (!idKey) continue;
+        if (assignedKeys.has(idKey)) continue;
+
+        if (!selectedKeys.has(idKey)) {
+          selectedKeys.add(idKey);
+          selectedPayloadByKey.set(idKey, buildSfPayloadFromPoint(it.point));
+          // 화면에 보이는 마커만 즉시 아이콘 갱신(성능)
+          if (it.marker) it.marker.setIcon(iconFor(idKey));
+          added++;
+        }
+      }
+
+      refreshUI(clusterLayer.getLayers().length);
+      setProgress(0, (reason || "선택") + ": " + added + "개 추가 (총 선택=" + selectedKeys.size + ")");
+      return added;
+    }
+
+    btnSelectVisible?.addEventListener("click", () => {
+      bulkSelectItems(lastInViewItems, "화면 전체 선택");
+    });
+
+    // ✅ 드래그 영역 선택(토글)
+    let boxSelectOn = false;
+    let boxStartLatLng = null;
+    let boxRect = null;
+
+    function setBoxSelect(on) {
+      boxSelectOn = !!on;
+      if (btnBoxSelect) btnBoxSelect.textContent = boxSelectOn ? "영역 선택: ON" : "영역 선택: OFF";
+
+      // 모드 종료 시 잔여 사각형 제거
+      if (!boxSelectOn && boxRect) {
+        map.removeLayer(boxRect);
+        boxRect = null;
+        boxStartLatLng = null;
+      }
+      setProgress(0, boxSelectOn ? "영역 선택 모드: 지도를 드래그해 영역을 지정하세요." : "영역 선택 모드 종료");
+    }
+
+    btnBoxSelect?.addEventListener("click", () => setBoxSelect(!boxSelectOn));
+
+    function onMapMouseDown(e) {
+      if (!boxSelectOn) return;
+      if (e?.originalEvent?.button !== 0) return; // left click only
+
+      // 마커/팝업 클릭은 제외
+      const t = e?.originalEvent?.target;
+      if (t && (t.closest?.(".leaflet-marker-icon") || t.closest?.(".leaflet-popup"))) return;
+
+      boxStartLatLng = e.latlng;
+      if (boxRect) map.removeLayer(boxRect);
+
+      const b = L.latLngBounds(boxStartLatLng, boxStartLatLng);
+      boxRect = L.rectangle(b, { weight: 1, fillOpacity: 0.05 });
+      boxRect.addTo(map);
+
+      // 드래그 동안 pan 방지(사용자 요구: 드래그=선택)
+      map.dragging.disable();
+    }
+
+    function onMapMouseMove(e) {
+      if (!boxSelectOn || !boxStartLatLng || !boxRect) return;
+      const b = L.latLngBounds(boxStartLatLng, e.latlng);
+      boxRect.setBounds(b);
+    }
+
+    function onMapMouseUp() {
+      if (!boxSelectOn) return;
+
+      // pan 복구
+      if (map.dragging && !map.dragging.enabled()) map.dragging.enable();
+
+      if (!boxStartLatLng || !boxRect) return;
+
+      const bounds = boxRect.getBounds();
+
+      // ✅ "화면에 나타난 마커" 기준으로만 선택(요구사항 + 성능)
+      const targets = [];
+      for (const it of lastInViewItems) {
+        if (bounds.contains([it.lat, it.lng])) targets.push(it);
+      }
+      bulkSelectItems(targets, "영역 선택");
+      boxStartLatLng = null;
+    }
+
+    map.on("mousedown", onMapMouseDown);
+    map.on("mousemove", onMapMouseMove);
+    document.addEventListener("mouseup", onMapMouseUp);
+
     function renderMarkersInView() {
       if (!dataLoaded || rendering) return;
       rendering = true;
@@ -704,6 +818,9 @@
         inView.push(it);
         if (inView.length >= MAX_MARKERS_ON_SCREEN) break;
       }
+
+      // ✅ 화면에 실제로 표시되는 목록 캐시(전체선택/영역선택에 사용)
+      lastInViewItems = inView;
 
       clusterLayer.clearLayers();
       clusterLayer.addLayers(inView.map(x => x.marker));
@@ -786,6 +903,40 @@
       pending.set(key, it);
     }
 
+    // ✅ 대량 저장(청크 전송) 상태
+    let bulkSave = null; // { queue:[], total:int, done:int, lastSentIds:Set }
+
+    function startBulkSave(allBuildings) {
+      bulkSave = {
+        queue: Array.isArray(allBuildings) ? allBuildings.slice() : [],
+        total: 0,
+        done: 0,
+        lastSentIds: new Set()
+      };
+      bulkSave.total = Math.max(1, Math.ceil(bulkSave.queue.length / SAVE_CHUNK_SIZE));
+      sendNextBulkChunk();
+    }
+
+    function sendNextBulkChunk() {
+      if (!bulkSave) return;
+      if (bulkSave.queue.length === 0) {
+        setStatus("완료", "ok");
+        setProgress(0, "대량 저장 완료 (" + bulkSave.done + "/" + bulkSave.total + ")");
+        bulkSave = null;
+        return;
+      }
+
+      const chunk = bulkSave.queue.splice(0, SAVE_CHUNK_SIZE);
+      bulkSave.lastSentIds = new Set(
+        chunk.map(x => String(x?.Id ?? x?.id ?? "").trim()).filter(Boolean)
+      );
+
+      setStatus("전송중", "warn");
+      setProgress(0, "대량 저장 전송 " + (bulkSave.done + 1) + "/" + bulkSave.total + " (이번 " + chunk.length + "개)");
+
+      sendAddBuildings(chunk);
+    }
+
     function sendAddBuildings(buildings) {
       const requestId = String(Date.now());
       setError("");
@@ -821,8 +972,17 @@
         setError("VF 초기화(BL_INIT) 수신 전입니다. 잠시 후 다시 시도하세요.");
         return;
       }
+      if (bulkSave) {
+        setProgress(0, "대량 저장 진행 중입니다. 잠시만 기다려주세요.");
+        return;
+      }
+
       const buildings = Array.from(selectedPayloadByKey.values());
-      sendAddBuildings(buildings);
+      if (buildings.length <= SAVE_CHUNK_SIZE) {
+        sendAddBuildings(buildings);
+      } else {
+        startBulkSave(buildings);
+      }
     });
 
     btnClearSelected.addEventListener("click", () => {
@@ -883,15 +1043,33 @@
           setStatus("오류", "err");
           setError(payload.message || "저장 실패");
           setProgress(0, "저장 실패");
+          // ✅ 대량 저장 중 오류면 중단
+          bulkSave = null;
         } else {
           setStatus("완료", "ok");
           setError("");
           setProgress(0, payload.message || "저장 완료");
 
-          selectedKeys.clear();
-          selectedPayloadByKey.clear();
-          if (dataLoaded) refreshMarkerIconsForAssignedSelected();
-          refreshUI(clusterLayer.getLayers().length);
+          if (bulkSave) {
+            // ✅ 이번 청크에 해당하는 선택만 제거하고 다음 청크로 진행
+            for (const k of bulkSave.lastSentIds) {
+              if (!k) continue;
+              selectedKeys.delete(k);
+              selectedPayloadByKey.delete(k);
+            }
+
+            if (dataLoaded) refreshMarkerIconsForAssignedSelected();
+            refreshUI(clusterLayer.getLayers().length);
+
+            bulkSave.done++;
+            // 다음 청크
+            sendNextBulkChunk();
+          } else {
+            selectedKeys.clear();
+            selectedPayloadByKey.clear();
+            if (dataLoaded) refreshMarkerIconsForAssignedSelected();
+            refreshUI(clusterLayer.getLayers().length);
+          }
         }
         return;
       }
